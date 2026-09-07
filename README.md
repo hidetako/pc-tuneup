@@ -1,0 +1,158 @@
+# PC TuneUp — Windows 11 用の無料メンテナンスツール
+
+Lenovo Vantage の「Smart Performance」のように PC の問題を**見つけるだけでなく、その場で直す**ための
+ツールです。Windows 11 に標準で入っている PowerShell 5.1 と WPF だけで動くので、
+追加インストールも課金もありません。Lenovo 以外のメーカー製 PC や自作 PC でも使えます。
+
+## 何ができるか
+
+Lenovo Smart Performance の 3 カテゴリに合わせて、46 項目を点検し、修復できるものはワンクリックで修復します。
+
+| カテゴリ | グループ | 主な項目 |
+| --- | --- | --- |
+| **PC の調整** | 蓄積した不要ファイル | 一時ファイル (ユーザー / システム)、Windows Update キャッシュ、配信の最適化キャッシュ、エラー報告、古いログ、クラッシュダンプ、GPU シェーダーキャッシュ、サムネイルキャッシュ、ごみ箱、Windows.old、コンポーネントストア (DISM) |
+| | 不要なアプリケーション | メーカー同梱の体験版・「PC 高速化」系ソフトの検出、使われにくいストアアプリの削除 |
+| | Windows の設定 | スタートアップ アプリ数、ストレージ センサー、空き容量、SSD の TRIM、ドライブ最適化スケジュール、時刻同期、仮想メモリ |
+| | システム・エラー | システムイメージ (DISM)、システムファイル (SFC)、ディスク検査 (chkdsk /scan)、S.M.A.R.T.、イベントログの重大エラー |
+| | レジストリ・エラー | 実体の無い自動起動エントリ、アンインストール残骸、App Paths、共有 DLL、サービス登録 |
+| **インターネット** | ブラウザーの不要データ | Edge / Chrome / Brave / Vivaldi / Firefox のキャッシュ、Windows の INetCache |
+| | ネットワーク設定 | DNS / HTTPS 接続の健全性、Wi-Fi アダプターの省電力設定、プロキシの残骸 |
+| **マルウェアとセキュリティ** | ウイルス対策とファイアウォール | リアルタイム保護、定義の更新、クイック スキャン、PUA 保護、ファイアウォール |
+| | Windows Update | 未適用の更新のダウンロードと適用、再起動待ちの検出 |
+| | システム保護 | UAC、SmartScreen、hosts ファイルの改変 |
+
+項目の一覧は `PCTuneUp.cmd -List` で確認できます。
+
+## 使い方
+
+### 1. 入手
+
+GitHub からリポジトリを取得します (OneDrive 配下は避けてください)。
+
+```powershell
+git clone https://github.com/hidetako/pc-tuneup.git C:\dev\pc-tuneup
+```
+
+### 2. 起動
+
+`PCTuneUp.cmd` をダブルクリックします。管理者権限を求めるダイアログが出るので「はい」を押してください
+(管理者権限が無いと Windows フォルダーやレジストリの HKLM に関わる項目はスキップされます)。
+
+初回に SmartScreen の「WindowsによってPCが保護されました」が出た場合は
+「詳細情報」→「実行」で続行できます。中身はテキストの PowerShell スクリプトなので、内容はすべて確認できます。
+
+### 3. スキャン → 修復
+
+1. **スキャン** を押します。1〜2 分で完了します。
+   「詳細スキャン」にチェックを入れると DISM・ディスク検査・Windows Update の確認など時間のかかる項目 (数分〜) も実行します。
+   時間のかかる項目は各行の **検査** ボタンで個別にも実行できます。
+2. 結果は 3 枚のカード (PC の調整 / インターネット / セキュリティ) に問題数として表示されます。
+   カードをクリックするとグループごとの内訳と、各項目の詳細 (ファイル一覧やレジストリのキー) が見られます。
+3. 低リスクの問題は自動でチェックが入ります。内容を確認して **選択した項目を修復** を押します。
+   確認ダイアログの後、修復と再スキャンが順に走り、各行に結果が表示されます。
+4. 必要なら **レポート保存** で JSON に出力できます。
+
+ログは `%LOCALAPPDATA%\PCTuneUp\logs\` に日付ごとに残ります。
+
+## 安全設計
+
+- **消すのは「再生成できるもの」だけ**: 一時ファイルは 1 日以上前のもの、ログは 7 日以上前のものに限定し、
+  Cookie・履歴・パスワード・ドキュメントには一切触れません。
+- **レジストリは「実体の無いファイルを指している登録」だけ**を対象にし、削除前に必ず `reg export` で
+  `%LOCALAPPDATA%\PCTuneUp\backup\*.reg` にバックアップします。ダブルクリックで元に戻せます。
+  一般的な「レジストリ クリーナー」が行う大量削除は、効果が無くリスクだけがあるため行いません。
+- **リスク表示**: 設定変更・再起動・エクスプローラー再起動を伴う項目は「中リスク」として既定で未選択です。
+  実行するかは一覧を見て決めてください。
+- **他社製セキュリティソフト**を使っている場合、Defender 関連の項目は「待機中」として問題扱いしません。
+- **動作は Windows 標準コマンドだけ**: DISM、SFC、chkdsk (Repair-Volume)、cleanmgr、Defender の PowerShell
+  コマンドレット、Windows Update Agent (COM) を呼ぶだけで、独自のドライバーや常駐プロセスはありません。
+
+## コマンドライン
+
+`PCTuneUp.cmd` に引数を付けるか、PowerShell から `PCTuneUp.ps1` を直接実行します。
+
+```powershell
+# 点検だけ (詳細項目も含める場合は -Full)
+.\PCTuneUp.ps1 -Scan
+.\PCTuneUp.ps1 -Scan -Full
+
+# 点検して、低リスクの「問題」を確認なしで修復し、レポートを保存
+.\PCTuneUp.ps1 -Scan -Fix -Auto
+
+# 点検して、問題と推奨項目を確認してから修復
+.\PCTuneUp.ps1 -Scan -Fix
+
+# 指定した項目だけ修復
+.\PCTuneUp.ps1 -Fix -Id junk.user-temp,junk.wu-cache,browser.cache
+
+# レポートを指定パスに保存
+.\PCTuneUp.ps1 -Scan -Report C:\dev\report.json
+
+# 項目一覧
+.\PCTuneUp.ps1 -List
+```
+
+### 毎週の自動メンテナンス
+
+管理者権限の PowerShell で次を実行すると、毎週土曜 10:00 に `-Scan -Fix -Auto` を実行する
+タスクがタスク スケジューラに登録されます (低リスクの問題だけを自動修復)。
+
+```powershell
+.\PCTuneUp.ps1 -InstallSchedule
+```
+
+解除は次のコマンドです。
+
+```powershell
+.\PCTuneUp.ps1 -UninstallSchedule
+```
+
+## Lenovo Vantage との付き合い方
+
+- Vantage 内の **Smart Performance** は、点検までは無料で修復が有料です。このツールで同じ範囲を無料で修復できるので、有料誘導は無視して構いません。
+- Vantage 本体は BIOS・ドライバーの更新に使えるため、残しても問題ありません。
+  不要なら「アプリの設定を開く」からアンインストールできます (このツールは「確認」として一覧に出すだけで、勝手に消しません)。
+- McAfee や ウイルスバスターの体験版は、期限切れなら削除して Windows Defender に任せる方が軽くなります。
+
+## 制限事項
+
+- 対象は Windows 11 (Windows 10 でも動きますが未検証) の Windows PowerShell 5.1 以上です。
+- ブラウザーのキャッシュ削除は、そのブラウザーが起動中だとスキップされます。Edge は閉じても
+  バックグラウンドで残ることがあるので、タスク マネージャーで終了させてください。
+- 「未適用の更新プログラム」の適用は Windows Update Agent 経由です。機能更新 (バージョンアップ) は対象外です。
+- S.M.A.R.T. の異常はソフトでは直せません。バックアップを取ってから交換を検討してください。
+- 会社の PC など、グループ ポリシーで管理されている環境では設定変更が反映されないことがあります。
+
+## 開発
+
+```text
+pc-tuneup/
+├── PCTuneUp.cmd          ダブルクリック用ランチャー (昇格して GUI を開く)
+├── PCTuneUp.ps1          エントリー (GUI / CLI / スケジュール登録)
+├── lib/
+│   ├── Core.ps1          チェック登録・実行・ファイル削除・レジストリバックアップ・ログ
+│   ├── Checks.Junk.ps1   蓄積した不要ファイル
+│   ├── Checks.Apps.ps1   不要なアプリケーション
+│   ├── Checks.Settings.ps1  Windows の設定
+│   ├── Checks.System.ps1    システム・エラー
+│   ├── Checks.Registry.ps1  レジストリ・エラー
+│   ├── Checks.Internet.ps1  ブラウザー / ネットワーク
+│   └── Checks.Security.ps1  Defender / Windows Update / システム保護
+├── gui/
+│   ├── MainWindow.xaml   WPF レイアウト
+│   └── Gui.ps1           GUI ロジック (スキャンと修復は別ランスペースで実行)
+└── tests/
+    └── Invoke-Tests.ps1  自動テスト (Windows / Linux の pwsh どちらでも実行可)
+```
+
+項目は `Register-Check @{ Id; Group; Name; Description; Scan; Fix; ... }` で追加します。
+`Scan` は `New-ScanResult` を、`Fix` は `New-FixResult` を返すスクリプトブロックです。
+「フォルダー配下の古いファイルを消す」型の項目は `New-JunkCheck` で 1 呼び出しで定義できます。
+すべての `.ps1` は Windows PowerShell 5.1 で日本語が化けないよう **UTF-8 (BOM 付き)** で保存してください
+(テストで検証しています)。
+
+テスト:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-Tests.ps1
+```

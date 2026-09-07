@@ -1,0 +1,5 @@
+# Keep PowerShell / batch files with CRLF and their encoding intact
+* text=auto
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.xaml text eol=crlf
