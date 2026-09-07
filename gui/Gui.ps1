@@ -30,6 +30,19 @@ foreach ($id in $Ids) {
 [pscustomobject]@{ Kind = 'done' }
 '@
 
+function Get-GuiStyle {
+    # XAML で定義したスタイルを名前で返す (起動時にキャッシュ済み。無ければウィンドウから検索)
+    param([Parameter(Mandatory)][string]$Name)
+    $G = $Global:PCTuneUpGui
+    if ($G.Styles -and $G.Styles.ContainsKey($Name)) { return $G.Styles[$Name] }
+    $w = $Global:PCTuneUpWindow
+    if (-not $w) { throw "GUI ウィンドウが初期化されていません (スタイル '$Name' を解決できません)" }
+    $style = $w.FindResource($Name)
+    if (-not $G.Styles) { $G.Styles = @{} }
+    $G.Styles[$Name] = $style
+    return $style
+}
+
 function New-Brush {
     param([string]$Hex)
     return (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($Hex)))
@@ -211,19 +224,19 @@ function New-CheckRow {
     $fixBtn = $null
     if ($Check.Long) {
         $scanBtn = New-Object System.Windows.Controls.Button
-        $scanBtn.Content = '検査'; $scanBtn.Style = $G.Window.FindResource('RowButton'); $scanBtn.Tag = $Check.Id
+        $scanBtn.Content = '検査'; $scanBtn.Style = Get-GuiStyle 'RowButton'; $scanBtn.Tag = $Check.Id
         $scanBtn.Add_Click({ param($s, $e) Start-Work -Mode scan -Ids @($s.Tag) })
         $btnPanel.Children.Add($scanBtn) | Out-Null
     }
     if ($Check.Fix) {
         $fixBtn = New-Object System.Windows.Controls.Button
-        $fixBtn.Content = $Check.FixLabel; $fixBtn.Style = $G.Window.FindResource('RowButton'); $fixBtn.Tag = $Check.Id
+        $fixBtn.Content = $Check.FixLabel; $fixBtn.Style = Get-GuiStyle 'RowButton'; $fixBtn.Tag = $Check.Id
         $fixBtn.Add_Click({ param($s, $e) Start-Fix -Ids @($s.Tag) })
         $btnPanel.Children.Add($fixBtn) | Out-Null
     }
     if ($Check.Action) {
         $actBtn = New-Object System.Windows.Controls.Button
-        $actBtn.Content = $Check.ActionLabel; $actBtn.Style = $G.Window.FindResource('RowButton'); $actBtn.Tag = $Check.Id
+        $actBtn.Content = $Check.ActionLabel; $actBtn.Style = Get-GuiStyle 'RowButton'; $actBtn.Tag = $Check.Id
         $actBtn.Add_Click({ param($s, $e) Invoke-RowAction -Id $s.Tag })
         $btnPanel.Children.Add($actBtn) | Out-Null
     }
@@ -245,7 +258,7 @@ function Render-Category {
         if ($checks.Count -eq 0) { continue }
 
         $exp = New-Object System.Windows.Controls.Expander
-        $exp.Style = $G.Window.FindResource('GroupExpander'); $exp.Tag = $gk
+        $exp.Style = Get-GuiStyle 'GroupExpander'; $exp.Tag = $gk
         $header = New-Object System.Windows.Controls.StackPanel
         $line = New-Object System.Windows.Controls.StackPanel
         $line.Orientation = 'Horizontal'
@@ -506,7 +519,14 @@ function Start-Gui {
     [xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
+    if (-not $window) { throw "MainWindow.xaml を読み込めませんでした ($xamlPath)" }
     $G.Window = $window
+    $Global:PCTuneUpWindow = $window
+    $G.Styles = @{}
+    foreach ($styleName in 'RowButton', 'GroupExpander', 'PrimaryButton', 'SecondaryButton') {
+        $G.Styles[$styleName] = $window.FindResource($styleName)
+    }
+    Write-Log ("GUI 初期化: window={0} styles={1}" -f $window.GetType().Name, ($G.Styles.Keys -join ','))
     $ui = @{}
     foreach ($node in $xaml.SelectNodes('//*[@Name]')) { $ui[$node.Name] = $window.FindName($node.Name) }
     $G.UI = $ui

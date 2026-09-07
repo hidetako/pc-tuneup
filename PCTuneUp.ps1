@@ -104,7 +104,19 @@ if (-not $cliMode) {
         . (Join-Path $PSScriptRoot 'gui\Gui.ps1')
         Start-Gui
     } catch {
-        Show-Fatal ("起動に失敗しました:`n" + $_.Exception.Message + "`n`n" + $_.ScriptStackTrace)
+        $detail = @(
+            '起動に失敗しました:'
+            $_.Exception.Message
+            ''
+            '[種類] ' + $_.Exception.GetType().FullName
+            '[位置] ' + $_.InvocationInfo.PositionMessage
+            ''
+            $_.ScriptStackTrace
+            ''
+            "ログ: $($Global:PCTuneUp.LogFile)"
+        ) -join "`n"
+        try { Write-Log $detail 'ERROR' } catch { }
+        Show-Fatal $detail
     }
     return
 }
