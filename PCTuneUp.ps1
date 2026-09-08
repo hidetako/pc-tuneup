@@ -36,7 +36,6 @@ Import-Checks
 $cliMode = $Scan -or $Fix -or $List -or $Report -or $InstallSchedule -or $UninstallSchedule -or $Version
 if ($cliMode) {
     $Global:PCTuneUp.Console = $true
-    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 }
 
 function Get-HostExe {

@@ -158,7 +158,7 @@ Register-Check @{
     RequiresAdmin = $true; Long = $true; FixLabel = 'クリーンアップ'
     Notes = 'DISM の AnalyzeComponentStore / StartComponentCleanup を使います。それぞれ数分かかります。'
     Scan = {
-        $r = Invoke-Exe -File 'Dism.exe' -Arguments '/Online', '/Cleanup-Image', '/AnalyzeComponentStore' -Quiet
+        $r = Invoke-Exe -File 'Dism.exe' -Arguments '/Online', '/Cleanup-Image', '/AnalyzeComponentStore', '/English' -Quiet
         if ($r.ExitCode -ne 0) { throw "DISM が失敗しました (終了コード $($r.ExitCode))" }
         $recLine  = $r.Lines | Where-Object { $_ -match 'Recommended|推奨' } | Select-Object -Last 1
         $sizeLine = $r.Lines | Where-Object { $_ -match 'Actual Size|実際のサイズ' } | Select-Object -First 1
@@ -174,7 +174,7 @@ Register-Check @{
     Fix = {
         param($ScanResult)
         Write-Log '  Dism /StartComponentCleanup を実行中 (数分かかります)…'
-        $r = Invoke-Exe -File 'Dism.exe' -Arguments '/Online', '/Cleanup-Image', '/StartComponentCleanup' -Quiet
+        $r = Invoke-Exe -File 'Dism.exe' -Arguments '/Online', '/Cleanup-Image', '/StartComponentCleanup', '/English' -Quiet
         if ($r.ExitCode -eq 0) {
             New-FixResult -Success $true -Message 'コンポーネントストアをクリーンアップしました'
         } else {

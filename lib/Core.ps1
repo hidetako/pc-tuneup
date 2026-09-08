@@ -330,7 +330,15 @@ function Invoke-Exe {
     $prev = $null
     try { $prev = [Console]::OutputEncoding } catch { }
     try {
-        if ($Unicode) { try { [Console]::OutputEncoding = [System.Text.Encoding]::Unicode } catch { } }
+        # sfc.exe は UTF-16、それ以外のコンソールツール (DISM, netsh, fsutil, ipconfig) は
+        # OEM コードページ (日本語 Windows では CP932) で出力する。呼び出し側のコンソール設定に
+        # 左右されないよう、ここで明示的に合わせる。
+        $enc = $null
+        if ($Unicode) { $enc = [System.Text.Encoding]::Unicode }
+        else {
+            try { $enc = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { }
+        }
+        if ($enc) { try { [Console]::OutputEncoding = $enc } catch { } }
         $lines = @(& $File @Arguments 2>&1 | ForEach-Object { [string]$_ })
         $code = $LASTEXITCODE
     } finally {

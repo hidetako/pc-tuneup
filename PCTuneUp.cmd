@@ -7,7 +7,6 @@ set "SCRIPT=%~dp0PCTuneUp.ps1"
 if "%~1"=="" (
     start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%SCRIPT%"
 ) else (
-    chcp 65001 >nul
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %*
     pause
 )
