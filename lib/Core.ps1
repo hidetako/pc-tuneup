@@ -79,6 +79,7 @@ function Write-Log {
 #      Action        = { ... }           任意。設定画面を開くなど手動操作
 #      ActionLabel   = '開く'            任意
 #      ActionConfirm = '確認メッセージ'  任意。指定すると実行前に確認
+#      ActionInWorker = $true           任意。時間のかかる操作を GUI のワーカーで実行し、結果を行に表示
 #      Risk          = 'low'|'medium'    任意 (medium は既定で未選択)
 #      RequiresAdmin = $true             任意
 #      Long          = $true             任意。時間のかかる検査 (詳細スキャン時のみ)
@@ -108,6 +109,7 @@ function Register-Check {
         Action        = $d['Action']
         ActionLabel   = $(if ($d['ActionLabel']) { [string]$d.ActionLabel } else { '開く' })
         ActionConfirm = [string]$d['ActionConfirm']
+        ActionInWorker = [bool]$d['ActionInWorker']
         Risk          = $risk
         RequiresAdmin = [bool]$d['RequiresAdmin']
         Long          = [bool]$d['Long']
@@ -235,11 +237,21 @@ function Invoke-CheckFix {
 }
 
 function Invoke-CheckAction {
+    # Action を実行する。Action が New-FixResult を返せばそれを、返さなければ成功扱いの結果を返す
     param([Parameter(Mandatory)][string]$Id)
     $check = Get-Check $Id
-    if (-not $check.Action) { return }
+    if (-not $check.Action) { return (New-FixResult -Success $false -Message 'この項目に操作はありません') }
     Write-Log "操作: $($check.Name) ($($check.ActionLabel))"
-    try { & $check.Action | Out-Null } catch { Write-Log "  失敗: $($_.Exception.Message)" 'ERROR' }
+    try {
+        $out = @(& $check.Action)
+        $r = Select-ResultObject -Output $out -Property 'Success'
+        if (-not $r) { $r = New-FixResult -Success $true -Message ($check.ActionLabel + ' を実行しました') }
+    } catch {
+        $r = New-FixResult -Success $false -Message ('エラー: ' + $_.Exception.Message)
+    }
+    $r | Add-Member -NotePropertyName Id -NotePropertyValue $Id -Force
+    Write-Log "  → $(if ($r.Success) { '成功' } else { '失敗' }): $($r.Message)" $(if ($r.Success) { 'OK' } else { 'ERROR' })
+    return $r
 }
 
 # ---------------------------------------------------------------------

@@ -159,6 +159,15 @@ Assert ($er.Status -eq 'error' -and $er.Summary -match 'boom') 'Invoke-CheckScan
 Register-Check @{ Id = 'system.__nofix'; Group = 'system'; Name = 'n'; Description = 'n'; Scan = { New-ScanResult -Status ok } }
 $nf = Invoke-CheckFix -Id 'system.__nofix'
 Assert (-not $nf.Success) 'Fix の無い項目の Invoke-CheckFix は失敗を返す'
+Register-Check @{ Id = 'system.__act'; Group = 'system'; Name = 'a'; Description = 'a'; Scan = { New-ScanResult -Status ok }; Action = { New-FixResult -Success $true -Message 'acted' -FreedBytes 5 }; ActionInWorker = $true; ActionLabel = 'やる' }
+$ar = Invoke-CheckAction -Id 'system.__act'
+Assert ($ar.Success -and $ar.Message -eq 'acted' -and $ar.Id -eq 'system.__act') 'Invoke-CheckAction は Action の結果を返す'
+Assert ((Get-Check 'system.__act').ActionInWorker) 'ActionInWorker が登録される'
+Register-Check @{ Id = 'system.__act2'; Group = 'system'; Name = 'a'; Description = 'a'; Scan = { New-ScanResult -Status ok }; Action = { 'stray output' } }
+$ar2 = Invoke-CheckAction -Id 'system.__act2'
+Assert ($ar2.Success -and $ar2.Message -match '開く') 'Action が結果を返さなくても成功扱いになる'
+Assert (-not (Invoke-CheckAction -Id 'system.__nofix').Success) 'Action の無い項目は失敗を返す'
+Assert ((Get-Check 'browser.cache').ActionInWorker -and (Get-Check 'browser.cache').Action) 'browser.cache に「閉じて削除」の Action がある'
 try { Register-Check @{ Id = 'junk.__test'; Group = 'junk'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false 'ID 重複は例外' } catch { Assert $true 'ID 重複は例外' }
 try { Register-Check @{ Id = 'x.y'; Group = 'nope'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false '不明グループは例外' } catch { Assert $true '不明グループは例外' }
 

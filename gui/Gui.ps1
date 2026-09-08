@@ -24,6 +24,9 @@ foreach ($id in $Ids) {
             if ($ScanResults -and $ScanResults.ContainsKey($id)) { $prev = $ScanResults[$id] }
             $fr = Invoke-CheckFix -Id $id -ScanResult $prev
             $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'fix'; Id = $id; Result = $fr })
+        } elseif ($Mode -eq 'action') {
+            $ar = Invoke-CheckAction -Id $id
+            $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'fix'; Id = $id; Result = $ar })
         }
         $sr = Invoke-CheckScan -Id $id
         $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'scan'; Id = $id; Result = $sr })
@@ -85,7 +88,10 @@ function Get-StatusText {
     }
     $c = $Global:PCTuneUpGui.Colors
     switch ($Result.Status) {
-        'issue'     { return @{ Text = $(if ($Result.Count -gt 1) { "● $($Result.Count) 問題" } else { '● 問題あり' }); Color = $c.issue } }
+        'issue'     {
+            $t = if ($Result.Bytes -gt 0) { '● ' + (Format-Bytes $Result.Bytes) } elseif ($Result.Count -gt 1) { "● $($Result.Count) 件" } else { '● 問題あり' }
+            return @{ Text = $t; Color = $c.issue }
+        }
         'recommend' { return @{ Text = '● 推奨';     Color = $c.recommend } }
         'info'      { return @{ Text = '● 確認';     Color = $c.info } }
         'ok'        { return @{ Text = '✓ 問題なし'; Color = $c.ok } }
@@ -362,13 +368,13 @@ function Set-Busy {
 #  ワーカー制御
 # ---------------------------------------------------------------------
 function Start-Work {
-    param([ValidateSet('scan', 'fix')][string]$Mode, [string[]]$Ids)
+    param([ValidateSet('scan', 'fix', 'action')][string]$Mode, [string[]]$Ids)
     $G = $Global:PCTuneUpGui
     if ($G.Busy -or -not $Ids -or $Ids.Count -eq 0) { return }
     $G.Mode = $Mode; $G.WorkIds = $Ids; $G.WorkDone = 0
     $G.FixBatch = @{}
     foreach ($id in $Ids) { if ($Mode -eq 'scan') { $G.FixResults.Remove($id) } }
-    $label = $(if ($Mode -eq 'scan') { 'スキャン' } else { '修復' })
+    $label = switch ($Mode) { 'scan' { 'スキャン' } 'fix' { '修復' } default { '実行' } }
     Set-Busy -Busy $true -Status ("{0}中… (0 / {1})" -f $label, $Ids.Count)
     $G.UI.LogExpander.IsExpanded = $true
 
@@ -417,7 +423,7 @@ function Invoke-WorkerTick {
                 Update-Row -Id $item.Id
                 Update-GroupHeader -Group $check.Group
                 Update-Cards
-                $label = $(if ($G.Mode -eq 'scan') { 'スキャン' } else { '修復' })
+                $label = switch ($G.Mode) { 'scan' { 'スキャン' } 'fix' { '修復' } default { '実行' } }
                 $G.UI.StatusText.Text = '{0}中… ({1} / {2}) {3}' -f $label, $G.WorkDone, $G.WorkIds.Count, $check.Name
             }
             'fix' {
@@ -458,7 +464,7 @@ function Complete-Work {
     } else {
         $ok = 0; $ng = 0; $freed = [long]0; $reboot = $false
         foreach ($f in $G.FixBatch.Values) { if ($f.Success) { $ok++ } else { $ng++ }; $freed += $f.FreedBytes; if ($f.RebootRequired) { $reboot = $true } }
-        $msg = '修復完了: 成功 {0} 件 / 失敗 {1} 件 / {2} 解放。' -f $ok, $ng, (Format-Bytes $freed)
+        $msg = '{3}完了: 成功 {0} 件 / 失敗 {1} 件 / {2} 解放。' -f $ok, $ng, (Format-Bytes $freed), $(if ($G.Mode -eq 'fix') { '修復' } else { '実行' })
         if ($reboot) { $msg += ' 一部の修復は再起動後に反映されます。' }
         Set-Busy -Busy $false -Status $msg
         if ($reboot) { [System.Windows.MessageBox]::Show('一部の修復を反映するには再起動が必要です。作業を保存してから再起動してください。', 'PC TuneUp', 'OK', 'Information') | Out-Null }
@@ -508,7 +514,11 @@ function Invoke-RowAction {
         $r = [System.Windows.MessageBox]::Show($check.ActionConfirm, 'PC TuneUp', 'YesNo', 'Warning')
         if ($r -ne 'Yes') { return }
     }
-    Invoke-CheckAction -Id $Id
+    if ($check.ActionInWorker) {
+        Start-Work -Mode action -Ids @($Id)
+        return
+    }
+    Invoke-CheckAction -Id $Id | Out-Null
     Add-LogLine ("{0} [INFO] 操作: {1} ({2})" -f (Get-Date -Format 'HH:mm:ss'), $check.Name, $check.ActionLabel)
 }
 

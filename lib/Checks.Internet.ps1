@@ -30,12 +30,65 @@ function Global:Get-BrowserCacheTargets {
     }
 }
 
+function Global:Close-BrowserProcess {
+    # ブラウザーを正常終了させる (ウィンドウには閉じる要求を送り、ウィンドウを持たない常駐プロセスだけ強制終了)。
+    # 戻り値: すべて終了できたら $true
+    param([Parameter(Mandatory)][string]$ProcessName, [int]$TimeoutSec = 20)
+    if (-not (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)) { return $true }
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $procs = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+        if ($procs.Count -eq 0) { return $true }
+        $windowed = @($procs | Where-Object { $_.MainWindowHandle -ne 0 })
+        if ($windowed.Count -eq 0) { break }
+        foreach ($p in $windowed) { try { $null = $p.CloseMainWindow() } catch { } }
+        Start-Sleep -Milliseconds 700
+    }
+    $left = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+    if ($left.Count -eq 0) { return $true }
+    if (@($left | Where-Object { $_.MainWindowHandle -ne 0 }).Count -gt 0) { return $false }   # 閉じる要求が拒まれた (未保存の確認など)
+    $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    return (-not (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue))
+}
+
+function Global:Invoke-BrowserCacheCleanup {
+    # 対応ブラウザーのキャッシュを削除する。-CloseRunning を付けると起動中のブラウザーを閉じてから削除する
+    param([switch]$CloseRunning)
+    $freed = [long]0; $skipped = @(); $done = @(); $closed = @()
+    foreach ($t in (Get-BrowserCacheTargets)) {
+        if (Test-ProcessRunning $t.Process) {
+            if ($CloseRunning) {
+                Write-Log "  $($t.Name) を閉じています…"
+                if (Close-BrowserProcess -ProcessName $t.Process) { $closed += $t.Name }
+                else { $skipped += $t.Name; Write-Log "  $($t.Name) を閉じられませんでした (未保存の確認などで拒否)" 'WARN'; continue }
+            } else {
+                $skipped += $t.Name; Write-Log "  $($t.Name) は起動中のためスキップ" 'WARN'; continue
+            }
+        }
+        $files = Get-JunkFiles -Paths $t.Paths
+        $r = Remove-JunkFiles -Files $files -Roots $t.Paths
+        $freed += $r.FreedBytes; $done += $t.Name
+    }
+    $parts = @()
+    if ($done.Count) { $parts += ('{0} のキャッシュを削除し {1} を解放しました' -f ($done -join ', '), (Format-Bytes $freed)) }
+    if ($closed.Count) { $parts += ('閉じたブラウザー: ' + ($closed -join ', ') + ' (タブは履歴の「最近閉じたタブ」から復元できます)') }
+    if ($skipped.Count) {
+        $parts += ('起動中のためスキップ: ' + ($skipped -join ', ') + $(if ($CloseRunning) { ' (閉じられませんでした。手動で閉じてから再実行してください)' } else { ' — ブラウザーを閉じてから「削除」を押すか、「ブラウザーを閉じて削除」を使ってください' }))
+    }
+    if ($parts.Count -eq 0) { $parts += '削除対象のブラウザーはありません' }
+    New-FixResult -Success ($skipped.Count -eq 0) -Message ($parts -join ' / ') -FreedBytes $freed
+}
+
 Register-Check @{
     Id = 'browser.cache'; Group = 'browser'
     Name = 'ブラウザーのキャッシュ'
     Description = 'Edge / Chrome / Brave / Vivaldi / Firefox のキャッシュ (Cookie・履歴・パスワードは残します)'
     FixLabel = '削除'
-    Notes = '起動中のブラウザーはスキップされます。閉じてから実行してください。'
+    ActionLabel = 'ブラウザーを閉じて削除'
+    ActionConfirm = '起動中のブラウザー (Edge / Chrome など) を閉じてからキャッシュを削除します。開いているタブは、ブラウザーの履歴にある「最近閉じたタブ」から復元できます。よろしいですか?'
+    ActionInWorker = $true
+    Notes = '起動中のブラウザーは「削除」ではスキップされます。閉じてから削除するか、「ブラウザーを閉じて削除」を使ってください。'
     Scan = {
         $targets = @(Get-BrowserCacheTargets)
         if ($targets.Count -eq 0) { return (New-ScanResult -Status ok -Summary '対応ブラウザーが見つかりません') }
@@ -48,21 +101,13 @@ Register-Check @{
             $items += '{0}: {1:N0} ファイル / {2}{3}' -f $t.Name, $files.Count, (Format-Bytes $bytes), $running
         }
         $status = if ($total -ge $Global:PCTuneUp.JunkIssueBytes) { 'issue' } elseif ($count -gt 0) { 'info' } else { 'ok' }
-        New-ScanResult -Status $status -Count $count -Bytes $total -Summary ('{0:N0} ファイル / {1}' -f $count, (Format-Bytes $total)) -Items $items
+        $running = @($targets | Where-Object { Test-ProcessRunning $_.Process } | ForEach-Object { $_.Name })
+        $summary = '{0:N0} ファイル / {1}' -f $count, (Format-Bytes $total)
+        if ($running.Count -and $count -gt 0) { $summary += ' — 起動中: ' + ($running -join ', ') + ' (閉じてから削除するか「ブラウザーを閉じて削除」を使用)' }
+        New-ScanResult -Status $status -Count $count -Bytes $total -Summary $summary -Items $items
     }
-    Fix = {
-        param($ScanResult)
-        $freed = [long]0; $skipped = @(); $done = @()
-        foreach ($t in (Get-BrowserCacheTargets)) {
-            if (Test-ProcessRunning $t.Process) { $skipped += $t.Name; Write-Log "  $($t.Name) は起動中のためスキップ" 'WARN'; continue }
-            $files = Get-JunkFiles -Paths $t.Paths
-            $r = Remove-JunkFiles -Files $files -Roots $t.Paths
-            $freed += $r.FreedBytes; $done += $t.Name
-        }
-        $msg = if ($done.Count) { '{0} のキャッシュを削除し {1} を解放しました' -f ($done -join ', '), (Format-Bytes $freed) } else { '削除できたブラウザーはありません' }
-        if ($skipped.Count) { $msg += ' / 起動中のためスキップ: ' + ($skipped -join ', ') + ' (閉じてから再実行してください)' }
-        New-FixResult -Success ($done.Count -gt 0 -or $skipped.Count -eq 0) -Message $msg -FreedBytes $freed
-    }
+    Fix = { param($ScanResult) Invoke-BrowserCacheCleanup }
+    Action = { Invoke-BrowserCacheCleanup -CloseRunning }
 }
 
 New-JunkCheck -Id 'browser.inetcache' -Group 'browser' -Name 'Windows のインターネット一時ファイル' `
