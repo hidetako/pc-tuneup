@@ -53,6 +53,35 @@ foreach ($fn in 'Get-RunKeyPaths', 'Get-StartupItems', 'Get-BrowserCacheTargets'
     Assert ([bool](Get-Command $fn -ErrorAction SilentlyContinue)) "ヘルパー関数 $fn が Import-Checks 後も見える"
 }
 
+# ---- 2b. 変数名の大文字小文字違い ------------------------------------
+#  PowerShell の変数名は大文字小文字を区別しない。同じ関数の中で $G と $g を
+#  別物のつもりで使うと、後の代入が前を黙って壊す (実際に GUI が起動不能になった)。
+Write-Host '[変数名の衝突]'
+$autoVars = @(
+    '_', 'psitem', 'true', 'false', 'null', 'args', 'input', 'this', 'error', 'matches',
+    'pwd', 'host', 'home', 'pid', 'psscriptroot', 'pscommandpath', 'myinvocation',
+    'lastexitcode', 'psversiontable', 'ofs', 'foreach', 'switch', 'stacktrace', 'psboundparameters'
+)
+foreach ($f in $files) {
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+    $funcs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+    $collisions = @()
+    foreach ($fn in $funcs) {
+        $names = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true) |
+            ForEach-Object { $_.VariablePath.UserPath } |
+            Where-Object { $_ -notmatch ':' -and $_.ToLowerInvariant() -notin $autoVars })
+        foreach ($bucket in ($names | Group-Object { $_.ToLowerInvariant() })) {
+            # -CaseSensitive が無いと Sort-Object -Unique が $G と $g を同一視してしまう
+            $spellings = @($bucket.Group | Sort-Object -Unique -CaseSensitive)
+            if ($spellings.Count -gt 1) { $collisions += "$($f.Name) / $($fn.Name): " + ($spellings -join ' vs ') }
+        }
+    }
+    $collisions = @($collisions | Sort-Object -Unique)
+    Assert ($collisions.Count -eq 0) "$($f.Name) に大文字小文字だけ違う変数がない"
+    foreach ($c in $collisions) { Write-Host "       $c" -ForegroundColor Red }
+}
+
 # ---- 3. ヘルパー -----------------------------------------------------
 Write-Host '[ヘルパー関数]'
 Assert ((Format-Bytes 0) -eq '0 B') 'Format-Bytes 0'
@@ -142,6 +171,22 @@ $json = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
 Assert ($json.Tool -eq 'PC TuneUp' -and $json.Checks.Count -eq 2) 'Export-Report: JSON に 2 件'
 Assert ($json.Summary.Errors -eq 1) 'Export-Report: エラー件数'
 Assert (($json.Checks | Where-Object { $_.Id -eq 'junk.__test' }).Fix.Success -eq $true) 'Export-Report: 修復結果を含む'
+
+# ---- 6b. 色の定義 -----------------------------------------------------
+Write-Host '[色の定義]'
+. (Join-Path $root 'gui\Gui.ps1')
+$colors = $Global:PCTuneUpGui.Colors
+Assert ($colors.Count -ge 10) "配色が定義されている ($($colors.Count) 色)"
+foreach ($key in $colors.Keys) {
+    Assert ([bool]([string]$colors[$key] -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')) "色 '$key' が #RRGGBB 形式 ($($colors[$key]))"
+}
+# New-Brush と同じ手順で ARGB に分解できることを確かめる (WPF 無しでも検証できる部分)
+foreach ($hex in @('#6B7280', '#1F2937', '#FFFFFF')) {
+    $h = 'FF' + $hex.Substring(1)
+    $bytes = for ($i = 0; $i -lt 8; $i += 2) { [Convert]::ToByte($h.Substring($i, 2), 16) }
+    Assert ($bytes.Count -eq 4) "$hex を 4 バイトに分解できる"
+}
+Assert (-not ('#12345' -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')) '不正な色を検出できる'
 
 # ---- 7. GUI ワーカースクリプトの構文 ----------------------------------
 Write-Host '[GUI]'

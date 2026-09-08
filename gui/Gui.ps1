@@ -44,8 +44,21 @@ function Get-GuiStyle {
 }
 
 function New-Brush {
+    # #RRGGBB / #AARRGGBB を自前で解釈する。ColorConverter は値が壊れていると
+    # 「トークンが無効です」で例外を投げるため、ここで検証して既定色に落とす。
     param([string]$Hex)
-    return (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($Hex)))
+    $s = ([string]$Hex).Trim()
+    if (-not ($s -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')) {
+        Write-Log "色の指定が不正です: '$Hex' → 既定色を使います" 'WARN'
+        $s = '#1F2937'
+    }
+    $h = $s.Substring(1)
+    if ($h.Length -eq 6) { $h = 'FF' + $h }
+    $bytes = for ($i = 0; $i -lt 8; $i += 2) { [Convert]::ToByte($h.Substring($i, 2), 16) }
+    $color = [System.Windows.Media.Color]::FromArgb($bytes[0], $bytes[1], $bytes[2], $bytes[3])
+    $brush = New-Object System.Windows.Media.SolidColorBrush $color
+    $brush.Freeze()
+    return $brush
 }
 
 function New-Text {
@@ -252,8 +265,8 @@ function Render-Category {
     $ui.GroupsPanel.Children.Clear()
     $G.Rows = @{}; $G.GroupHeaders = @{}
     foreach ($gk in $Global:PCTuneUp.Groups.Keys) {
-        $g = $Global:PCTuneUp.Groups[$gk]
-        if ($g.Category -ne $G.Category) { continue }
+        $grp = $Global:PCTuneUp.Groups[$gk]
+        if ($grp.Category -ne $G.Category) { continue }
         $checks = @(Get-Checks -Group $gk -IncludeLong)
         if ($checks.Count -eq 0) { continue }
 
@@ -262,12 +275,12 @@ function Render-Category {
         $header = New-Object System.Windows.Controls.StackPanel
         $line = New-Object System.Windows.Controls.StackPanel
         $line.Orientation = 'Horizontal'
-        $line.Children.Add((New-Text -Text $g.Name -Size 14 -Weight SemiBold -NoWrap)) | Out-Null
+        $line.Children.Add((New-Text -Text $grp.Name -Size 14 -Weight SemiBold -NoWrap)) | Out-Null
         $count = New-Text -Text '' -Size 12 -Weight SemiBold -NoWrap
         $count.VerticalAlignment = 'Center'; $count.Margin = '14,0,0,0'
         $line.Children.Add($count) | Out-Null
         $header.Children.Add($line) | Out-Null
-        $header.Children.Add((New-Text -Text $g.Description -Size 12 -Color $G.Colors.muted)) | Out-Null
+        $header.Children.Add((New-Text -Text $grp.Description -Size 12 -Color $G.Colors.muted)) | Out-Null
         $exp.Header = $header
         $G.GroupHeaders[$gk] = $count
 
