@@ -33,8 +33,8 @@ Register-Check @{
     RequiresAdmin = $true; Long = $true; FixLabel = '検査と修復 (sfc /scannow)'
     Notes = 'sfc /scannow は 5〜15 分かかります。'
     Scan = {
-        $log = Join-Path $env:SystemRoot 'Logs\CBS\CBS.log'
-        if (-not (Test-Path -LiteralPath $log)) { return (New-ScanResult -Status recommend -Count 1 -Summary '実行履歴がありません。一度実行することをお勧めします') }
+        $log = Join-EnvPath $env:SystemRoot 'Logs\CBS\CBS.log'
+        if (-not $log -or -not (Test-Path -LiteralPath $log)) { return (New-ScanResult -Status recommend -Count 1 -Summary '実行履歴がありません。一度実行することをお勧めします') }
         $tail = Get-Content -LiteralPath $log -Tail 60000 -ErrorAction Stop
         $lastVerify = $tail | Where-Object { $_ -match '\[SR\] Verify complete' } | Select-Object -Last 1
         if (-not $lastVerify) { return (New-ScanResult -Status recommend -Count 1 -Summary '最近の実行履歴がありません。一度実行することをお勧めします') }

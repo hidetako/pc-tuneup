@@ -217,7 +217,8 @@ Register-Check @{
     RequiresAdmin = $true; FixLabel = '有効にする'
     Scan = {
         $k = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
-        $lua = [int](Get-RegValue -Path $k -Name 'EnableLUA')
+        $luaRaw = Get-RegValue -Path $k -Name 'EnableLUA'
+        $lua = if ($null -eq $luaRaw) { 1 } else { [int]$luaRaw }   # 値が無い場合の Windows 既定は有効
         $consent = Get-RegValue -Path $k -Name 'ConsentPromptBehaviorAdmin'
         $items = @("EnableLUA: $lua", "ConsentPromptBehaviorAdmin: $consent")
         if ($lua -ne 1) { New-ScanResult -Status issue -Count 1 -Summary 'UAC が無効です' -Items $items }
@@ -259,12 +260,12 @@ Register-Check @{
     ActionLabel = 'hosts を開く'
     Notes = '広告ブロックや開発用に自分で追加した行なら問題ありません。'
     Scan = {
-        $path = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-        if (-not (Test-Path -LiteralPath $path)) { return (New-ScanResult -Status ok -Summary 'hosts ファイルはありません') }
+        $path = Join-EnvPath $env:SystemRoot 'System32\drivers\etc\hosts'
+        if (-not $path -or -not (Test-Path -LiteralPath $path)) { return (New-ScanResult -Status ok -Summary 'hosts ファイルはありません') }
         $lines = @(Get-Content -LiteralPath $path -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
         $custom = @($lines | Where-Object { $_ -notmatch '^(127\.0\.0\.1|::1|0\.0\.0\.0)\s+(localhost|localhost\.localdomain|broadcasthost|ip6-\S+)\s*$' })
         if ($custom.Count -eq 0) { New-ScanResult -Status ok -Summary '追加エントリはありません' }
         else { New-ScanResult -Status info -Count $custom.Count -Summary "$($custom.Count) 行の追加エントリがあります (内容を確認してください)" -Items @($custom | Select-Object -First 40) }
     }
-    Action = { Start-Tool 'notepad.exe' -Arguments (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') }
+    Action = { Start-Tool 'notepad.exe' -Arguments (Join-EnvPath $env:SystemRoot 'System32\drivers\etc\hosts') }
 }

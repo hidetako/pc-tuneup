@@ -19,11 +19,11 @@ function Global:Get-StartupItems {
         }
     }
     $folders = @(
-        @{ Path = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup';     Approved = "HKCU:\$approvedRoot\StartupFolder" },
-        @{ Path = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'; Approved = "HKLM:\$approvedRoot\StartupFolder" }
+        @{ Path = Join-EnvPath $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup';     Approved = "HKCU:\$approvedRoot\StartupFolder" },
+        @{ Path = Join-EnvPath $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'; Approved = "HKLM:\$approvedRoot\StartupFolder" }
     )
     foreach ($f in $folders) {
-        if (-not (Test-Path -LiteralPath $f.Path)) { continue }
+        if (-not $f.Path -or -not (Test-Path -LiteralPath $f.Path)) { continue }
         foreach ($file in (Get-ChildItem -LiteralPath $f.Path -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' })) {
             $flag = Get-RegValue -Path $f.Approved -Name $file.Name
             $enabled = -not ($flag -and $flag.Length -gt 0 -and ($flag[0] -band 1) -eq 1)

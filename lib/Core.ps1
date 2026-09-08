@@ -295,6 +295,16 @@ function Format-Bytes {
     return ('{0:N0} B' -f $Bytes)
 }
 
+function Join-EnvPath {
+    # Join-Path の環境変数版。基底が未設定 (null / 空) なら $null を返す。
+    # Join-Path は null を渡すと例外になるため、環境変数が欠けた特殊なセッションでも
+    # チェック全体が error にならず「対象なし」として読み飛ばせるようにする。
+    param([string]$Base, [string]$Child)
+    if ([string]::IsNullOrWhiteSpace($Base)) { return $null }
+    if ([string]::IsNullOrWhiteSpace($Child)) { return $Base }
+    return (Join-Path $Base $Child)
+}
+
 function Test-NameMatch {
     param([string]$Name, [string[]]$Patterns)
     foreach ($p in $Patterns) { if ($p -eq '*' -or $Name -like $p) { return $true } }

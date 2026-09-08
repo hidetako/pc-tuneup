@@ -196,6 +196,38 @@ Assert $m.Success 'WorkerScript が定義されている'
 $tokens = $null; $errors = $null
 [System.Management.Automation.Language.Parser]::ParseInput($m.Groups[1].Value, [ref]$tokens, [ref]$errors) | Out-Null
 Assert ($errors.Count -eq 0) 'WorkerScript を解析できる'
+
+# GUI と同じ手順でワーカー ランスペースを起動し、結果がキュー経由で返ることを確かめる
+$logQ = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+$resQ = New-Object 'System.Collections.Concurrent.ConcurrentQueue[psobject]'
+$rs = [runspacefactory]::CreateRunspace(); $rs.Open()
+$ps = [powershell]::Create(); $ps.Runspace = $rs
+[void]$ps.AddScript($Global:PCTuneUpGui.WorkerScript)
+[void]$ps.AddParameter('LibRoot', $Global:PCTuneUp.LibRoot)
+[void]$ps.AddParameter('LogQueue', $logQ)
+[void]$ps.AddParameter('ResultQueue', $resQ)
+[void]$ps.AddParameter('Mode', 'scan')
+[void]$ps.AddParameter('Ids', @('junk.user-temp', 'junk.wer'))
+[void]$ps.AddParameter('ScanResults', @{})
+$handle = $ps.BeginInvoke()
+$deadline = (Get-Date).AddSeconds(60)
+while (-not $handle.IsCompleted -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+Assert $handle.IsCompleted 'ワーカーが 60 秒以内に完了する'
+try { $ps.EndInvoke($handle) | Out-Null } catch { Write-Host "       EndInvoke: $($_.Exception.Message)" -ForegroundColor Red }
+$workerErrors = @($ps.Streams.Error)
+Assert ($workerErrors.Count -eq 0) "ワーカーがエラーを出さない ($($workerErrors.Count) 件)"
+foreach ($werr in $workerErrors) { Write-Host "       $werr" -ForegroundColor Red }
+$got = @(); $tmpItem = $null
+while ($resQ.TryDequeue([ref]$tmpItem)) { $got += $tmpItem }
+Assert (@($got | Where-Object { $_.Kind -eq 'scan' -and $_.Id -eq 'junk.user-temp' }).Count -eq 1) 'junk.user-temp の結果がキューに届く'
+Assert (@($got | Where-Object { $_.Kind -eq 'scan' -and $_.Id -eq 'junk.wer' }).Count -eq 1) 'junk.wer の結果がキューに届く'
+Assert (($got | Select-Object -Last 1).Kind -eq 'done') '最後に done が届く'
+$scanItem = $got | Where-Object { $_.Id -eq 'junk.user-temp' } | Select-Object -First 1
+Assert ($scanItem.Result.Status -in 'ok', 'info', 'issue') "結果に Status がある ($($scanItem.Result.Status))"
+$logLines = @(); $tmpLine = $null
+while ($logQ.TryDequeue([ref]$tmpLine)) { $logLines += $tmpLine }
+Assert (@($logLines | Where-Object { $_ -match 'スキャン' }).Count -ge 2) "ログがキュー経由で届く ($($logLines.Count) 行)"
+$ps.Dispose(); $rs.Close(); $rs.Dispose()
 $xamlDoc = [xml](Get-Content -LiteralPath $xaml -Raw -Encoding UTF8)
 $names = @($xamlDoc.SelectNodes('//*[@Name]') | ForEach-Object { $_.Name })
 foreach ($n in 'ScanButton', 'FixButton', 'CancelButton', 'GroupsPanel', 'LogBox', 'StatusText', 'FullScanBox', 'CatTuneupBadgeText', 'CatSecurityGlyph') {

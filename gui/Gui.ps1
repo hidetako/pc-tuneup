@@ -13,21 +13,26 @@ $Global:PCTuneUpGui.Colors = @{
 
 # ワーカー ランスペースで実行するスクリプト (GUI スレッドをブロックしない)
 $Global:PCTuneUpGui.WorkerScript = @'
-param($LibRoot, $LogQueue, $Mode, $Ids, $ScanResults)
+param($LibRoot, $LogQueue, $ResultQueue, $Mode, $Ids, $ScanResults)
 . (Join-Path $LibRoot 'Core.ps1')
 Import-Checks
 $Global:PCTuneUp.LogQueue = $LogQueue
 foreach ($id in $Ids) {
-    if ($Mode -eq 'fix') {
-        $prev = $null
-        if ($ScanResults -and $ScanResults.ContainsKey($id)) { $prev = $ScanResults[$id] }
-        $fr = Invoke-CheckFix -Id $id -ScanResult $prev
-        [pscustomobject]@{ Kind = 'fix'; Id = $id; Result = $fr }
+    try {
+        if ($Mode -eq 'fix') {
+            $prev = $null
+            if ($ScanResults -and $ScanResults.ContainsKey($id)) { $prev = $ScanResults[$id] }
+            $fr = Invoke-CheckFix -Id $id -ScanResult $prev
+            $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'fix'; Id = $id; Result = $fr })
+        }
+        $sr = Invoke-CheckScan -Id $id
+        $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'scan'; Id = $id; Result = $sr })
+    } catch {
+        Write-Log ("{0}: {1}" -f $id, $_.Exception.Message) 'ERROR'
+        $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'scan'; Id = $id; Result = (New-ScanResult -Status error -Summary ('エラー: ' + $_.Exception.Message)) })
     }
-    $sr = Invoke-CheckScan -Id $id
-    [pscustomobject]@{ Kind = 'scan'; Id = $id; Result = $sr }
 }
-[pscustomobject]@{ Kind = 'done' }
+$ResultQueue.Enqueue([pscustomobject]@{ Kind = 'done' })
 '@
 
 function Get-GuiStyle {
@@ -368,6 +373,7 @@ function Start-Work {
     $G.UI.LogExpander.IsExpanded = $true
 
     $G.LogQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+    $G.ResultQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[psobject]'
     $scanCopy = @{}
     foreach ($id in $Ids) { if ($G.Results.ContainsKey($id)) { $scanCopy[$id] = $G.Results[$id] } }
 
@@ -379,12 +385,11 @@ function Start-Work {
     [void]$ps.AddScript($G.WorkerScript)
     [void]$ps.AddParameter('LibRoot', $Global:PCTuneUp.LibRoot)
     [void]$ps.AddParameter('LogQueue', $G.LogQueue)
+    [void]$ps.AddParameter('ResultQueue', $G.ResultQueue)
     [void]$ps.AddParameter('Mode', $Mode)
     [void]$ps.AddParameter('Ids', $Ids)
     [void]$ps.AddParameter('ScanResults', $scanCopy)
-    $G.Output = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
-    $G.OutIndex = 0
-    $G.Handle = $ps.BeginInvoke((New-Object 'System.Management.Automation.PSDataCollection[psobject]'), $G.Output)
+    $G.Handle = $ps.BeginInvoke()
     $G.PS = $ps; $G.RS = $rs
     $G.Timer.Start()
 }
@@ -392,11 +397,12 @@ function Start-Work {
 function Invoke-WorkerTick {
     $G = $Global:PCTuneUpGui
     if (-not $G.PS) { return }
+    $completed = $G.Handle.IsCompleted   # 先に読む: これ以前に投入された結果は必ず下で拾える
     $line = $null
     while ($G.LogQueue.TryDequeue([ref]$line)) { Add-LogLine $line }
 
-    while ($G.OutIndex -lt $G.Output.Count) {
-        $item = $G.Output[$G.OutIndex]; $G.OutIndex++
+    $item = $null
+    while ($G.ResultQueue.TryDequeue([ref]$item)) {
         if (-not $item -or -not $item.PSObject.Properties['Kind']) { continue }
         switch ($item.Kind) {
             'scan' {
@@ -422,7 +428,7 @@ function Invoke-WorkerTick {
         }
     }
 
-    if ($G.Handle.IsCompleted) {
+    if ($completed) {
         $G.Timer.Stop()
         try { $G.PS.EndInvoke($G.Handle) | Out-Null } catch { Add-LogLine ('[ERROR] ' + $_.Exception.Message) }
         foreach ($err in $G.PS.Streams.Error) { Add-LogLine ('[ERROR] ' + $err.ToString()) }

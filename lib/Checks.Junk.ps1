@@ -4,34 +4,34 @@
 
 New-JunkCheck -Id 'junk.user-temp' -Name 'ユーザーの一時ファイル' `
     -Description '%TEMP% に残った 1 日以上前の一時ファイル' -OlderThanDays 1 `
-    -Paths { @($env:TEMP, (Join-Path $env:LOCALAPPDATA 'Temp')) }
+    -Paths { @($env:TEMP, (Join-EnvPath $env:LOCALAPPDATA 'Temp')) }
 
 New-JunkCheck -Id 'junk.system-temp' -Name 'システムの一時ファイル' `
     -Description 'C:\Windows\Temp に残った 1 日以上前の一時ファイル' -OlderThanDays 1 -RequiresAdmin $true `
-    -Paths { @((Join-Path $env:SystemRoot 'Temp')) }
+    -Paths { @((Join-EnvPath $env:SystemRoot 'Temp')) }
 
 New-JunkCheck -Id 'junk.wu-cache' -Name 'Windows Update のダウンロードキャッシュ' `
     -Description '適用済み更新プログラムのダウンロード残骸 (SoftwareDistribution\Download)' -RequiresAdmin $true `
-    -Paths { @((Join-Path $env:SystemRoot 'SoftwareDistribution\Download')) } `
+    -Paths { @((Join-EnvPath $env:SystemRoot 'SoftwareDistribution\Download')) } `
     -BeforeFix { foreach ($s in 'wuauserv', 'bits') { try { Stop-Service -Name $s -Force -ErrorAction Stop; Write-Log "  サービス停止: $s" } catch { } } } `
     -AfterFix  { foreach ($s in 'bits', 'wuauserv') { try { Start-Service -Name $s -ErrorAction Stop } catch { } } } `
     -Notes '削除中は Windows Update サービスを一時停止し、終了後に再開します。'
 
 New-JunkCheck -Id 'junk.do-cache' -Name '配信の最適化キャッシュ' `
     -Description '他の PC と更新を共有するためのキャッシュ (再取得可能)' -RequiresAdmin $true `
-    -Paths { @((Join-Path $env:SystemRoot 'ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache')) } `
+    -Paths { @((Join-EnvPath $env:SystemRoot 'ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache')) } `
     -BeforeFix { if (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue) { try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop } catch { } } }
 
 New-JunkCheck -Id 'junk.wer' -Name 'Windows エラー報告のアーカイブ' `
     -Description 'アプリのクラッシュ時に作られる報告ファイル (古いエラーとアラート)' `
     -Paths {
         @(
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportArchive'),
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportQueue'),
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\Temp'),
-            (Join-Path $env:ProgramData 'Microsoft\Windows\WER\ReportArchive'),
-            (Join-Path $env:ProgramData 'Microsoft\Windows\WER\ReportQueue'),
-            (Join-Path $env:ProgramData 'Microsoft\Windows\WER\Temp')
+            (Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportArchive'),
+            (Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportQueue'),
+            (Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\WER\Temp'),
+            (Join-EnvPath $env:ProgramData 'Microsoft\Windows\WER\ReportArchive'),
+            (Join-EnvPath $env:ProgramData 'Microsoft\Windows\WER\ReportQueue'),
+            (Join-EnvPath $env:ProgramData 'Microsoft\Windows\WER\Temp')
         )
     }
 
@@ -40,13 +40,13 @@ New-JunkCheck -Id 'junk.logs' -Name '古いシステムログ' `
     -Include @('*.log', '*.cab', '*.etl', '*.txt', '*.xml') -Exclude @('CBS.log', 'dism.log') `
     -Paths {
         @(
-            (Join-Path $env:SystemRoot 'Logs\CBS'),
-            (Join-Path $env:SystemRoot 'Logs\DISM'),
-            (Join-Path $env:SystemRoot 'Logs\WindowsUpdate'),
-            (Join-Path $env:SystemRoot 'Logs\MoSetup'),
-            (Join-Path $env:SystemRoot 'Logs\NetSetup'),
-            (Join-Path $env:SystemRoot 'Logs\SIH'),
-            (Join-Path $env:SystemRoot 'Panther\UnattendGC')
+            (Join-EnvPath $env:SystemRoot 'Logs\CBS'),
+            (Join-EnvPath $env:SystemRoot 'Logs\DISM'),
+            (Join-EnvPath $env:SystemRoot 'Logs\WindowsUpdate'),
+            (Join-EnvPath $env:SystemRoot 'Logs\MoSetup'),
+            (Join-EnvPath $env:SystemRoot 'Logs\NetSetup'),
+            (Join-EnvPath $env:SystemRoot 'Logs\SIH'),
+            (Join-EnvPath $env:SystemRoot 'Panther\UnattendGC')
         )
     }
 
@@ -55,10 +55,10 @@ New-JunkCheck -Id 'junk.dumps' -Name 'クラッシュダンプ' `
     -Include @('*.dmp', '*.DMP', '*.hdmp', '*.mdmp') `
     -Paths {
         @(
-            (Join-Path $env:SystemRoot 'Minidump'),
-            (Join-Path $env:SystemRoot 'LiveKernelReports'),
-            (Join-Path $env:LOCALAPPDATA 'CrashDumps'),
-            (Join-Path $env:SystemRoot 'MEMORY.DMP')
+            (Join-EnvPath $env:SystemRoot 'Minidump'),
+            (Join-EnvPath $env:SystemRoot 'LiveKernelReports'),
+            (Join-EnvPath $env:LOCALAPPDATA 'CrashDumps'),
+            (Join-EnvPath $env:SystemRoot 'MEMORY.DMP')
         )
     } `
     -Notes 'C:\Windows\MEMORY.DMP と Minidump を対象にします。直近 7 日分は原因調査のため残します。'
@@ -67,19 +67,19 @@ New-JunkCheck -Id 'junk.shader-cache' -Name 'GPU シェーダーキャッシュ'
     -Description 'DirectX / GPU ドライバーが作るシェーダーキャッシュ (自動で再生成される)' -OlderThanDays 1 `
     -Paths {
         @(
-            (Join-Path $env:LOCALAPPDATA 'D3DSCache'),
-            (Join-Path $env:LOCALAPPDATA 'NVIDIA\DXCache'),
-            (Join-Path $env:LOCALAPPDATA 'NVIDIA\GLCache'),
-            (Join-Path $env:LOCALAPPDATA 'AMD\DxCache'),
-            (Join-Path $env:LOCALAPPDATA 'AMD\GLCache'),
-            (Join-Path $env:LOCALAPPDATA 'Intel\ShaderCache')
+            (Join-EnvPath $env:LOCALAPPDATA 'D3DSCache'),
+            (Join-EnvPath $env:LOCALAPPDATA 'NVIDIA\DXCache'),
+            (Join-EnvPath $env:LOCALAPPDATA 'NVIDIA\GLCache'),
+            (Join-EnvPath $env:LOCALAPPDATA 'AMD\DxCache'),
+            (Join-EnvPath $env:LOCALAPPDATA 'AMD\GLCache'),
+            (Join-EnvPath $env:LOCALAPPDATA 'Intel\ShaderCache')
         )
     }
 
 New-JunkCheck -Id 'junk.thumbcache' -Name 'サムネイル／アイコンキャッシュ' `
     -Description 'エクスプローラーのサムネイル DB。壊れると画像が表示されない原因になる' -Risk 'medium' -NoRecurse `
     -Include @('thumbcache_*.db', 'iconcache_*.db') `
-    -Paths { @((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer')) } `
+    -Paths { @((Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\Explorer')) } `
     -BeforeFix { try { Stop-Process -Name explorer -Force -ErrorAction Stop; Start-Sleep -Seconds 2 } catch { } } `
     -AfterFix  { if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe } } `
     -Notes '削除のためにエクスプローラーを一度再起動します。開いているフォルダーウィンドウは閉じられます。画像のサムネイルが表示されない不具合があるときだけ実行してください。'
@@ -118,8 +118,8 @@ Register-Check @{
     Notes = 'Windows 標準の「ディスク クリーンアップ」を使って安全に削除します。数分かかることがあります。'
     Scan = {
         $paths = @('Windows.old', '$WINDOWS.~BT', '$WINDOWS.~WS', '$GetCurrent', '$SysReset') |
-            ForEach-Object { Join-Path $env:SystemDrive $_ }
-        $present = @($paths | Where-Object { Test-Path -LiteralPath $_ })
+            ForEach-Object { Join-EnvPath $env:SystemDrive $_ }
+        $present = @($paths | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
         if ($present.Count -eq 0) { return (New-ScanResult -Status ok -Summary '残骸はありません') }
         $files = Get-JunkFiles -Paths $present
         $r = New-JunkScanResult -Files $files

@@ -7,14 +7,14 @@ function Global:Get-BrowserCacheTargets {
     $chromiumProfileDirs = @('Cache\Cache_Data', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache')
     $chromiumRootDirs = @('GrShaderCache', 'ShaderCache', 'GraphiteDawnCache', 'Crashpad\reports')
     $browsers = @(
-        @{ Name = 'Microsoft Edge'; Process = 'msedge';  Root = (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data');            Kind = 'chromium' },
-        @{ Name = 'Google Chrome';  Process = 'chrome';  Root = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data');             Kind = 'chromium' },
-        @{ Name = 'Brave';          Process = 'brave';   Root = (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'); Kind = 'chromium' },
-        @{ Name = 'Vivaldi';        Process = 'vivaldi'; Root = (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data');                   Kind = 'chromium' },
-        @{ Name = 'Mozilla Firefox'; Process = 'firefox'; Root = (Join-Path $env:LOCALAPPDATA 'Mozilla\Firefox\Profiles');           Kind = 'firefox' }
+        @{ Name = 'Microsoft Edge'; Process = 'msedge';  Root = (Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Edge\User Data');            Kind = 'chromium' },
+        @{ Name = 'Google Chrome';  Process = 'chrome';  Root = (Join-EnvPath $env:LOCALAPPDATA 'Google\Chrome\User Data');             Kind = 'chromium' },
+        @{ Name = 'Brave';          Process = 'brave';   Root = (Join-EnvPath $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'); Kind = 'chromium' },
+        @{ Name = 'Vivaldi';        Process = 'vivaldi'; Root = (Join-EnvPath $env:LOCALAPPDATA 'Vivaldi\User Data');                   Kind = 'chromium' },
+        @{ Name = 'Mozilla Firefox'; Process = 'firefox'; Root = (Join-EnvPath $env:LOCALAPPDATA 'Mozilla\Firefox\Profiles');           Kind = 'firefox' }
     )
     foreach ($b in $browsers) {
-        if (-not (Test-Path -LiteralPath $b.Root)) { continue }
+        if (-not $b.Root -or -not (Test-Path -LiteralPath $b.Root)) { continue }
         $paths = @()
         if ($b.Kind -eq 'chromium') {
             foreach ($d in $chromiumRootDirs) { $paths += Join-Path $b.Root $d }
@@ -68,7 +68,7 @@ Register-Check @{
 New-JunkCheck -Id 'browser.inetcache' -Group 'browser' -Name 'Windows のインターネット一時ファイル' `
     -Description 'Windows 内蔵の Web コンポーネントや古いアプリが使うキャッシュ (INetCache)' -OlderThanDays 1 `
     -Exclude @('container.dat', 'desktop.ini') `
-    -Paths { @((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache'), (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCookies\Low')) }
+    -Paths { @((Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\INetCache'), (Join-EnvPath $env:LOCALAPPDATA 'Microsoft\Windows\INetCookies\Low')) }
 
 # ---- ネットワーク ------------------------------------------------------
 
