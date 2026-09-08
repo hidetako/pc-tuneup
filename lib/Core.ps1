@@ -539,7 +539,7 @@ function Set-RegValue {
 
 function ConvertTo-RegExePath {
     param([string]$PSPath)
-    $p = $PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', ''
+    $p = $PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', '' -replace '^Registry::', ''
     $p = $p -replace '^HKLM:\\', 'HKEY_LOCAL_MACHINE\' -replace '^HKCU:\\', 'HKEY_CURRENT_USER\' `
              -replace '^HKCR:\\', 'HKEY_CLASSES_ROOT\' -replace '^HKU:\\', 'HKEY_USERS\'
     return $p

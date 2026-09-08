@@ -215,6 +215,33 @@ Assert (($sortedIds -join ',') -eq 'a.low,a.man,a.err,a.rec,a.ok') "重要度順
 $tie = @('a.man', 'a.med') | ForEach-Object { Get-Check $_ }
 $tieIds = @(Sort-ByRank -Items $tie -RankOf { param($c) Get-CheckRank -Check $c } | ForEach-Object { $_.Id })
 Assert (($tieIds -join ',') -eq 'a.man,a.med') '同じ重要度なら元の順序を保つ'
+
+Write-Host '[レジストリ チェック]'
+foreach ($rid in 'registry.shell-extensions', 'registry.file-assoc', 'registry.path', 'registry.winlogon') {
+    Assert ($Global:PCTuneUp.Checks.Contains($rid)) "$rid が登録されている"
+}
+Assert ((Get-Check 'registry.path').Risk -eq 'medium') 'PATH の整理は中リスク'
+Assert ([bool](Get-Check 'registry.path').FixConfirm) 'PATH の整理は確認文を出す'
+Assert ((Get-Check 'registry.winlogon').Risk -eq 'medium') 'Winlogon の復元は中リスク'
+Assert (-not (Get-Check 'registry.file-assoc').Fix) '関連付けは自動修復しない (検出のみ)'
+Assert ([bool](Get-Check 'registry.file-assoc').Action) '関連付けは設定画面を開く操作を持つ'
+Assert ((Get-Check 'registry.shell-extensions').RequiresAdmin) 'シェル拡張の削除は管理者権限が必要'
+Assert ((ConvertTo-RegExePath 'Registry::HKEY_CLASSES_ROOT\CLSID\{x}') -eq 'HKEY_CLASSES_ROOT\CLSID\{x}') 'ConvertTo-RegExePath: Registry:: 形式'
+
+# PATH の判定 (実在するフォルダーと、しないフォルダーを混ぜる)
+$pathTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('pctuneup-path-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $pathTmp -Force | Out-Null
+$missingDir = Join-Path $pathTmp 'nope'
+$raw = "$pathTmp;$missingDir;;  $pathTmp  "
+$st = @(Get-PathEntryStatus -RawPath $raw)
+Assert ($st.Count -eq 3) "空の項目は無視する ($($st.Count))"
+Assert ($st[0].Exists -and -not $st[1].Exists -and $st[2].Exists) '存在するフォルダーだけ Exists になる'
+Assert ($st[2].Raw -eq $pathTmp) '前後の空白は取り除かれる'
+$env:PCTUNEUP_TESTDIR = $pathTmp
+$expandSt = @(Get-PathEntryStatus -RawPath '%PCTUNEUP_TESTDIR%')
+Assert ($expandSt[0].Exists -and $expandSt[0].Raw -eq '%PCTUNEUP_TESTDIR%') '環境変数は展開して判定し、元の表記を保つ'
+Assert ((@(Get-PathEntryStatus -RawPath '') ).Count -eq 0) '空の PATH は 0 件'
+Remove-Item -LiteralPath $pathTmp -Recurse -Force -ErrorAction SilentlyContinue
 try { Register-Check @{ Id = 'junk.__test'; Group = 'junk'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false 'ID 重複は例外' } catch { Assert $true 'ID 重複は例外' }
 try { Register-Check @{ Id = 'x.y'; Group = 'nope'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false '不明グループは例外' } catch { Assert $true '不明グループは例外' }
 
