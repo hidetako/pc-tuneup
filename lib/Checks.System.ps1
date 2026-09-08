@@ -7,8 +7,8 @@ Register-Check @{
     Name = 'システムイメージの健全性 (DISM)'
     Description = 'Windows のコンポーネントストアに破損の記録がないか'
     RequiresAdmin = $true; LongFix = $true; FixLabel = '修復 (DISM)'
-    FixConfirm = 'DISM でシステムイメージを修復します (10〜30 分。開始すると途中で止められません。インターネット接続が必要です)'
-    Notes = '修復には Windows Update から正常なファイルを取得するためインターネット接続が必要で、10〜30 分かかることがあります。'
+    FixConfirm = 'DISM でシステムイメージを修復します (通常 10〜30 分、回線やディスクによっては 1 時間以上。開始すると途中で止められません。インターネット接続が必要です)'
+    Notes = '修復には Windows Update から正常なファイルを取得するためインターネット接続が必要です。通常 10〜30 分ですが 1 時間以上かかることもあり、途中の割合表示が長く止まって見えるのは正常です。進み具合は C:\Windows\Logs\DISM\dism.log の更新時刻でも確認できます。'
     Scan = {
         $r = Repair-WindowsImage -Online -CheckHealth -ErrorAction Stop
         $state = [string]$r.ImageHealthState

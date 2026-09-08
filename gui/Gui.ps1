@@ -444,6 +444,7 @@ function Start-Work {
     if ($G.Busy -or -not $Ids -or $Ids.Count -eq 0) { return }
     $G.Mode = $Mode; $G.WorkIds = $Ids; $G.WorkDone = 0
     $G.WorkStarted = Get-Date; $G.ItemStarted = $null; $G.CurrentName = ''; $G.NextHeartbeat = (Get-Date).AddSeconds(60)
+    $G.ProgIndex = 0; $G.ProgressText = ''; $G.ProgressPercent = -1
     $G.FixBatch = @{}
     foreach ($id in $Ids) { if ($Mode -eq 'scan') { $G.FixResults.Remove($id) } }
     $label = switch ($Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
@@ -487,6 +488,7 @@ function Invoke-WorkerTick {
                 $G.ItemStarted = Get-Date
                 $G.NextHeartbeat = (Get-Date).AddSeconds(60)
                 $G.CurrentName = (Get-Check $item.Id).Name
+                $G.ProgressText = ''; $G.ProgressPercent = -1
             }
             'scan' {
                 $G.Results[$item.Id] = $item.Result
@@ -509,6 +511,23 @@ function Invoke-WorkerTick {
         }
     }
 
+    # Repair-WindowsImage などが出す進捗ストリームを拾い、何 % まで進んだかを示す。
+    # ネイティブコマンド (sfc.exe など) は進捗を出さないので、その場合は経過時間だけになる。
+    try {
+        $progCount = $G.PS.Streams.Progress.Count
+        if ($progCount -gt $G.ProgIndex) {
+            for ($pi = $G.ProgIndex; $pi -lt $progCount; $pi++) {
+                $pr = $G.PS.Streams.Progress[$pi]
+                if ([string]$pr.RecordType -eq 'Completed') { $G.ProgressText = ''; $G.ProgressPercent = -1 }
+                elseif ($pr.PercentComplete -ge 0) {
+                    $G.ProgressPercent = [int]$pr.PercentComplete
+                    $G.ProgressText = '{0}%' -f $G.ProgressPercent
+                }
+            }
+            $G.ProgIndex = $progCount
+        }
+    } catch { }
+
     # 経過時間を毎回描き直す。DISM のように何分も出力が無い処理でも、動いていることが分かるようにする
     if ($G.PS -and $G.WorkStarted) {
         $now = Get-Date
@@ -516,11 +535,19 @@ function Invoke-WorkerTick {
         $pos = [math]::Min($G.WorkDone + 1, $G.WorkIds.Count)
         $text = '{0}中… ({1} / {2})' -f $label, $pos, $G.WorkIds.Count
         if ($G.CurrentName) { $text += ' ' + $G.CurrentName }
+        if ($G.ProgressText) { $text += ' ' + $G.ProgressText }
+        if ($G.ProgressPercent -ge 0) {
+            $G.UI.Progress.IsIndeterminate = $false
+            $G.UI.Progress.Value = $G.ProgressPercent
+        } elseif (-not $G.UI.Progress.IsIndeterminate) {
+            $G.UI.Progress.IsIndeterminate = $true
+        }
         if ($G.ItemStarted) {
             $itemEl = $now - $G.ItemStarted
             if ($itemEl.TotalSeconds -ge 5) { $text += ' — この項目 ' + (Format-Elapsed $itemEl) }
             if ($now -ge $G.NextHeartbeat) {
-                Add-LogLine ("{0} [INFO]   実行中… {1} ({2} 経過)" -f $now.ToString('HH:mm:ss'), $G.CurrentName, (Format-Elapsed $itemEl))
+                $pct = $(if ($G.ProgressText) { ' ' + $G.ProgressText } else { '' })
+                Add-LogLine ("{0} [INFO]   実行中… {1}{2} ({3} 経過)" -f $now.ToString('HH:mm:ss'), $G.CurrentName, $pct, (Format-Elapsed $itemEl))
                 $G.NextHeartbeat = $now.AddSeconds(60)
             }
         }

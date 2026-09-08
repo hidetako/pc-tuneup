@@ -183,6 +183,8 @@ Assert ($closing -match 'BeginStop') 'Closing は BeginStop を使う'
 Assert ($closing -notmatch '\$G\.PS\.Stop\(\)') 'Closing は同期 Stop() を使わない'
 Assert ($guiSrc -match "Kind = 'begin'") 'ワーカーは項目の開始を通知する'
 Assert ($guiSrc -match 'Format-Elapsed') '経過時間を表示する'
+Assert ($guiSrc -match 'Streams\.Progress') '進捗ストリームから割合を読む'
+Assert ($guiSrc -match 'Progress\.IsIndeterminate = \$false') '割合が分かるときは進捗バーを実測表示にする'
 
 # 修復件数とカード赤バッジの一致 (Get-FixQueuedCount) を検証する
 . (Join-Path $root 'gui\Gui.ps1')
