@@ -168,6 +168,29 @@ $ar2 = Invoke-CheckAction -Id 'system.__act2'
 Assert ($ar2.Success -and $ar2.Message -match '開く') 'Action が結果を返さなくても成功扱いになる'
 Assert (-not (Invoke-CheckAction -Id 'system.__nofix').Success) 'Action の無い項目は失敗を返す'
 Assert ([bool](Get-Check 'browser.cache').FixConfirm) 'browser.cache は修復前に確認文を出す'
+
+# 修復件数とカード赤バッジの一致 (Get-FixQueuedCount) を検証する
+. (Join-Path $root 'gui\Gui.ps1')
+$Global:PCTuneUpGui.Results = @{
+    'a.low'   = (New-ScanResult -Status issue)       # 自動修復・低リスク → 修復対象
+    'a.med'   = (New-ScanResult -Status issue)       # 自動修復・中リスク・未選択 → 要確認
+    'a.man'   = (New-ScanResult -Status issue)       # 修復手段なし → 要確認
+    'a.rec'   = (New-ScanResult -Status recommend)   # 推奨・未選択 → どちらでもない
+}
+$Global:PCTuneUpGui.Selected = @{ 'a.low' = $true; 'a.med' = $false; 'a.man' = $false; 'a.rec' = $false }
+# Test-Fixable はチェック定義を Get-Check で引くのでダミーを登録
+Register-Check @{ Id = 'a.low'; Group = 'junk'; Name='l'; Description='l'; Scan={New-ScanResult}; Fix={param($r) New-FixResult}; Risk='low' }
+Register-Check @{ Id = 'a.med'; Group = 'junk'; Name='m'; Description='m'; Scan={New-ScanResult}; Fix={param($r) New-FixResult}; Risk='medium' }
+Register-Check @{ Id = 'a.man'; Group = 'junk'; Name='n'; Description='n'; Scan={New-ScanResult}; Action={} }
+Register-Check @{ Id = 'a.rec'; Group = 'junk'; Name='r'; Description='r'; Scan={New-ScanResult}; Fix={param($r) New-FixResult}; Risk='low' }
+$queued = Get-FixQueuedCount
+$att = Get-AttentionCount
+Assert ($queued -eq 1) "修復対象は選択済みの自動修復項目だけ ($queued)"
+Assert ($att -eq 2) "要確認は未選択の問題 (中リスク + 手動) ($att)"
+# a.rec にチェックを付けると修復件数が増える (要確認は変わらない)
+$Global:PCTuneUpGui.Selected['a.rec'] = $true
+Assert ((Get-FixQueuedCount) -eq 2) 'チェックを増やすと修復件数が増える'
+Assert ((Get-AttentionCount) -eq 2) '推奨項目のチェックは要確認件数に影響しない'
 try { Register-Check @{ Id = 'junk.__test'; Group = 'junk'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false 'ID 重複は例外' } catch { Assert $true 'ID 重複は例外' }
 try { Register-Check @{ Id = 'x.y'; Group = 'nope'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false '不明グループは例外' } catch { Assert $true '不明グループは例外' }
 

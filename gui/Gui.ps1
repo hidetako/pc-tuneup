@@ -106,14 +106,33 @@ function Test-Fixable {
     return [bool]($Check.Fix -and $Result -and $Result.Status -in 'issue', 'recommend', 'info')
 }
 
-function Get-IssueCount {
+function Get-FixQueuedCount {
+    # 「修復」で実際に処理される件数 = チェックが入っていて自動修復できる項目。
+    # カードの赤バッジと修復ボタンの数字はどちらもこれを使うので、常に一致する。
     param([string]$Category, [string]$Group)
     $G = $Global:PCTuneUpGui
     $n = 0
     foreach ($c in $Global:PCTuneUp.Checks.Values) {
         if ($Category -and $c.Category -ne $Category) { continue }
         if ($Group -and $c.Group -ne $Group) { continue }
-        if ($G.Results.ContainsKey($c.Id) -and $G.Results[$c.Id].Status -eq 'issue') { $n++ }
+        if (-not $G.Results.ContainsKey($c.Id)) { continue }
+        if ($G.Selected.ContainsKey($c.Id) -and $G.Selected[$c.Id] -and (Test-Fixable -Check $c -Result $G.Results[$c.Id])) { $n++ }
+    }
+    return $n
+}
+
+function Get-AttentionCount {
+    # 問題だが今は修復対象になっていない件数 = 自動修復できない問題、または中リスクで未選択の問題。
+    param([string]$Category, [string]$Group)
+    $G = $Global:PCTuneUpGui
+    $n = 0
+    foreach ($c in $Global:PCTuneUp.Checks.Values) {
+        if ($Category -and $c.Category -ne $Category) { continue }
+        if ($Group -and $c.Group -ne $Group) { continue }
+        if (-not $G.Results.ContainsKey($c.Id)) { continue }
+        if ($G.Results[$c.Id].Status -ne 'issue') { continue }
+        $queued = ($G.Selected.ContainsKey($c.Id) -and $G.Selected[$c.Id] -and (Test-Fixable -Check $c -Result $G.Results[$c.Id]))
+        if (-not $queued) { $n++ }
     }
     return $n
 }
@@ -134,17 +153,24 @@ function Update-Cards {
     $G = $Global:PCTuneUpGui; $ui = $G.UI
     foreach ($cat in $Global:PCTuneUp.Categories.Keys) {
         $prefix = 'Cat' + $cat.Substring(0, 1).ToUpper() + $cat.Substring(1)
-        $n = Get-IssueCount -Category $cat
+        $fix = Get-FixQueuedCount -Category $cat
+        $att = Get-AttentionCount -Category $cat
         $badge = $ui["${prefix}Badge"]; $badgeText = $ui["${prefix}BadgeText"]; $text = $ui["${prefix}Text"]; $btn = $ui[$prefix]
-        if ($n -gt 0) { $badge.Visibility = 'Visible'; $badgeText.Text = "$n" } else { $badge.Visibility = 'Collapsed' }
-        if (-not (Test-CategoryScanned $cat)) { $text.Text = '未点検' }
-        elseif ($n -gt 0) { $text.Text = "$n 問題" } else { $text.Text = '問題なし' }
+        # 赤バッジは「修復する件数」だけ (修復ボタンの数字と必ず一致)
+        if ($fix -gt 0) { $badge.Visibility = 'Visible'; $badgeText.Text = "$fix" } else { $badge.Visibility = 'Collapsed' }
+        if (-not (Test-CategoryScanned $cat)) {
+            $text.Text = '未点検'
+        } else {
+            $parts = @()
+            if ($fix -gt 0) { $parts += "$fix 件を修復" }
+            if ($att -gt 0) { $parts += "$att 件は要確認" }
+            $text.Text = $(if ($parts.Count) { $parts -join ' / ' } else { '問題なし' })
+        }
         if ($cat -eq $G.Category) { $btn.Background = New-Brush $G.Colors.accentLight; $btn.BorderBrush = New-Brush $G.Colors.accent }
         else { $btn.Background = New-Brush '#FFFFFF'; $btn.BorderBrush = New-Brush $G.Colors.border }
     }
     $ui.CategoryBlurb.Text = $Global:PCTuneUp.Categories[$G.Category].Blurb
 }
-
 function Update-GroupHeader {
     param([string]$Group)
     $G = $Global:PCTuneUpGui
@@ -152,12 +178,19 @@ function Update-GroupHeader {
     $tb = $G.GroupHeaders[$Group]
     $scanned = $false
     foreach ($c in (Get-Checks -Group $Group -IncludeLong)) { if ($G.Results.ContainsKey($c.Id)) { $scanned = $true } }
-    $n = Get-IssueCount -Group $Group
-    if (-not $scanned) { $tb.Text = '未点検'; $tb.Foreground = New-Brush $G.Colors.none }
-    elseif ($n -gt 0) { $tb.Text = "$n 問題"; $tb.Foreground = New-Brush $G.Colors.issue }
-    else { $tb.Text = '問題なし'; $tb.Foreground = New-Brush $G.Colors.ok }
+    $fix = Get-FixQueuedCount -Group $Group
+    $att = Get-AttentionCount -Group $Group
+    if (-not $scanned) { $tb.Text = '未点検'; $tb.Foreground = New-Brush $G.Colors.none; return }
+    $parts = @()
+    if ($fix -gt 0) { $parts += "$fix 件を修復" }
+    if ($att -gt 0) { $parts += "$att 件は要確認" }
+    if ($parts.Count) {
+        $tb.Text = $parts -join ' / '
+        $tb.Foreground = New-Brush $(if ($fix -gt 0) { $G.Colors.issue } else { $G.Colors.recommend })
+    } else {
+        $tb.Text = '問題なし'; $tb.Foreground = New-Brush $G.Colors.ok
+    }
 }
-
 function Update-Row {
     param([string]$Id)
     $G = $Global:PCTuneUpGui
@@ -299,7 +332,7 @@ function Render-Category {
         }
         $exp.Content = $body
         if ($G.Expanded.ContainsKey($gk)) { $exp.IsExpanded = $G.Expanded[$gk] }
-        else { $exp.IsExpanded = (-not (Test-CategoryScanned $G.Category)) -or ((Get-IssueCount -Group $gk) -gt 0) }
+        else { $exp.IsExpanded = (-not (Test-CategoryScanned $G.Category)) -or ((Get-FixQueuedCount -Group $gk) + (Get-AttentionCount -Group $gk) -gt 0) }
         $exp.Add_Expanded({ param($s, $e) $Global:PCTuneUpGui.Expanded[$s.Tag] = $true })
         $exp.Add_Collapsed({ param($s, $e) $Global:PCTuneUpGui.Expanded[$s.Tag] = $false })
         $ui.GroupsPanel.Children.Add($exp) | Out-Null
@@ -311,12 +344,14 @@ function Render-Category {
 
 function Update-FixButton {
     $G = $Global:PCTuneUpGui
-    $n = 0
-    foreach ($id in $G.Selected.Keys) {
-        if ($G.Selected[$id] -and $G.Results.ContainsKey($id) -and (Test-Fixable -Check (Get-Check $id) -Result $G.Results[$id])) { $n++ }
-    }
+    $n = Get-FixQueuedCount   # 全カテゴリ合計。カード赤バッジの合計と必ず一致する
     $G.UI.FixButton.Content = $(if ($n -gt 0) { "$n 件を修復" } else { '修復' })
     $G.UI.FixButton.IsEnabled = ($n -gt 0 -and -not $G.Busy)
+    # チェックの増減をカードとグループ見出しの数字に即座に反映する
+    if (-not $G.Busy) {
+        Update-Cards
+        foreach ($gk in $G.GroupHeaders.Keys) { Update-GroupHeader -Group $gk }
+    }
 }
 
 function Add-LogLine {
@@ -436,8 +471,17 @@ function Complete-Work {
             if ($r.Status -eq 'recommend') { $rec++ }
             if ((Get-Check $id).Group -in 'junk', 'browser') { $bytes += $r.Bytes }
         }
-        $msg = '点検完了: 問題 {0} 件 / 推奨 {1} 件 / 削除できる不要ファイル {2}。' -f $issues, $rec, (Format-Bytes $bytes)
-        $msg += $(if ($issues -gt 0) { ' 直したい項目にチェックが付いていることを確認して「修復」を押してください。' } else { ' 問題はありません。' })
+        $fix = Get-FixQueuedCount
+        $att = Get-AttentionCount
+        $parts = @()
+        if ($fix -gt 0) { $parts += "自動修復 $fix 件 (選択済み)" }
+        if ($att -gt 0) { $parts += "要確認 $att 件 (手動または任意)" }
+        if ($rec -gt 0) { $parts += "推奨 $rec 件" }
+        if ($bytes -gt 0) { $parts += ('削除できる不要ファイル ' + (Format-Bytes $bytes)) }
+        if ($parts.Count -eq 0) { $parts += '問題なし' }
+        $msg = '点検完了: ' + ($parts -join ' / ') + '。'
+        if ($fix -gt 0) { $msg += ' 「' + $fix + ' 件を修復」を押すと選択中の項目を修復します。' }
+        elseif ($att -gt 0) { $msg += ' 要確認の項目は各行の「設定を開く」や、チェックを付けてから「修復」で対応します。' }
         Set-Busy -Busy $false -Status $msg
     } else {
         $ok = 0; $ng = 0; $freed = [long]0; $reboot = $false
