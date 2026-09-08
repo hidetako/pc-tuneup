@@ -167,7 +167,7 @@ Register-Check @{ Id = 'system.__act2'; Group = 'system'; Name = 'a'; Descriptio
 $ar2 = Invoke-CheckAction -Id 'system.__act2'
 Assert ($ar2.Success -and $ar2.Message -match '開く') 'Action が結果を返さなくても成功扱いになる'
 Assert (-not (Invoke-CheckAction -Id 'system.__nofix').Success) 'Action の無い項目は失敗を返す'
-Assert ((Get-Check 'browser.cache').ActionInWorker -and (Get-Check 'browser.cache').Action) 'browser.cache に「閉じて削除」の Action がある'
+Assert ([bool](Get-Check 'browser.cache').FixConfirm) 'browser.cache は修復前に確認文を出す'
 try { Register-Check @{ Id = 'junk.__test'; Group = 'junk'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false 'ID 重複は例外' } catch { Assert $true 'ID 重複は例外' }
 try { Register-Check @{ Id = 'x.y'; Group = 'nope'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false '不明グループは例外' } catch { Assert $true '不明グループは例外' }
 

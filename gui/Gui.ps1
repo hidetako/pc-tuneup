@@ -83,8 +83,8 @@ function New-Text {
 function Get-StatusText {
     param($Check, $Result)
     if (-not $Result) {
-        if ($Check.Long) { return @{ Text = '詳細スキャンで検査'; Color = $Global:PCTuneUpGui.Colors.none } }
-        return @{ Text = '未スキャン'; Color = $Global:PCTuneUpGui.Colors.none }
+        if ($Check.Long) { return @{ Text = '詳細検査で確認'; Color = $Global:PCTuneUpGui.Colors.none } }
+        return @{ Text = '未点検'; Color = $Global:PCTuneUpGui.Colors.none }
     }
     $c = $Global:PCTuneUpGui.Colors
     switch ($Result.Status) {
@@ -137,7 +137,7 @@ function Update-Cards {
         $n = Get-IssueCount -Category $cat
         $badge = $ui["${prefix}Badge"]; $badgeText = $ui["${prefix}BadgeText"]; $text = $ui["${prefix}Text"]; $btn = $ui[$prefix]
         if ($n -gt 0) { $badge.Visibility = 'Visible'; $badgeText.Text = "$n" } else { $badge.Visibility = 'Collapsed' }
-        if (-not (Test-CategoryScanned $cat)) { $text.Text = '未スキャン' }
+        if (-not (Test-CategoryScanned $cat)) { $text.Text = '未点検' }
         elseif ($n -gt 0) { $text.Text = "$n 問題" } else { $text.Text = '問題なし' }
         if ($cat -eq $G.Category) { $btn.Background = New-Brush $G.Colors.accentLight; $btn.BorderBrush = New-Brush $G.Colors.accent }
         else { $btn.Background = New-Brush '#FFFFFF'; $btn.BorderBrush = New-Brush $G.Colors.border }
@@ -153,7 +153,7 @@ function Update-GroupHeader {
     $scanned = $false
     foreach ($c in (Get-Checks -Group $Group -IncludeLong)) { if ($G.Results.ContainsKey($c.Id)) { $scanned = $true } }
     $n = Get-IssueCount -Group $Group
-    if (-not $scanned) { $tb.Text = '未スキャン'; $tb.Foreground = New-Brush $G.Colors.none }
+    if (-not $scanned) { $tb.Text = '未点検'; $tb.Foreground = New-Brush $G.Colors.none }
     elseif ($n -gt 0) { $tb.Text = "$n 問題"; $tb.Foreground = New-Brush $G.Colors.issue }
     else { $tb.Text = '問題なし'; $tb.Foreground = New-Brush $G.Colors.ok }
 }
@@ -181,7 +181,7 @@ function Update-Row {
     } else { $row.FixMsg.Visibility = 'Collapsed' }
 
     if ($result -and $result.Items.Count -gt 0) {
-        $max = 12
+        $max = 5
         $lines = @($result.Items | Select-Object -First $max)
         if ($result.Items.Count -gt $max) { $lines += ('… 他 {0} 件 (レポートに全件出力されます)' -f ($result.Items.Count - $max)) }
         $row.Items.Text = ($lines -join "`n")
@@ -191,7 +191,6 @@ function Update-Row {
     $fixable = Test-Fixable -Check $check -Result $result
     $row.CheckBox.IsEnabled = $fixable
     $row.CheckBox.IsChecked = [bool]($fixable -and $G.Selected.ContainsKey($Id) -and $G.Selected[$Id])
-    if ($row.FixBtn) { $row.FixBtn.IsEnabled = $fixable }
 }
 
 function New-CheckRow {
@@ -228,12 +227,8 @@ function New-CheckRow {
         $notes.Margin = '0,3,0,0'
         $stack.Children.Add($notes) | Out-Null
     }
-    $tags = @()
-    if ($Check.Risk -eq 'medium') { $tags += '中リスク (既定で未選択)' }
-    if ($Check.RequiresAdmin) { $tags += '管理者権限' }
-    if ($Check.Long) { $tags += '時間がかかる' }
-    if ($tags.Count) {
-        $tagText = New-Text -Text ($tags -join ' / ') -Size 11 -Color $G.Colors.recommend
+    if ($Check.Risk -ne 'low') {
+        $tagText = New-Text -Text '設定変更や再起動を伴うため、既定ではチェックを外しています' -Size 11 -Color $G.Colors.recommend
         $tagText.Margin = '0,2,0,0'
         $stack.Children.Add($tagText) | Out-Null
     }
@@ -245,28 +240,23 @@ function New-CheckRow {
 
     $btnPanel = New-Object System.Windows.Controls.StackPanel
     $btnPanel.Orientation = 'Horizontal'; $btnPanel.VerticalAlignment = 'Top'
-    $fixBtn = $null
     if ($Check.Long) {
+        # 時間のかかる項目は通常の点検では走らせない。行から個別に「詳細検査」できる
         $scanBtn = New-Object System.Windows.Controls.Button
-        $scanBtn.Content = '検査'; $scanBtn.Style = Get-GuiStyle 'RowButton'; $scanBtn.Tag = $Check.Id
+        $scanBtn.Content = '詳細検査'; $scanBtn.Style = Get-GuiStyle 'LinkButton'; $scanBtn.Tag = $Check.Id
         $scanBtn.Add_Click({ param($s, $e) Start-Work -Mode scan -Ids @($s.Tag) })
         $btnPanel.Children.Add($scanBtn) | Out-Null
     }
-    if ($Check.Fix) {
-        $fixBtn = New-Object System.Windows.Controls.Button
-        $fixBtn.Content = $Check.FixLabel; $fixBtn.Style = Get-GuiStyle 'RowButton'; $fixBtn.Tag = $Check.Id
-        $fixBtn.Add_Click({ param($s, $e) Start-Fix -Ids @($s.Tag) })
-        $btnPanel.Children.Add($fixBtn) | Out-Null
-    }
     if ($Check.Action) {
+        # 自動修復できない項目だけ、設定画面などを開くリンクを出す
         $actBtn = New-Object System.Windows.Controls.Button
-        $actBtn.Content = $Check.ActionLabel; $actBtn.Style = Get-GuiStyle 'RowButton'; $actBtn.Tag = $Check.Id
+        $actBtn.Content = $Check.ActionLabel; $actBtn.Style = Get-GuiStyle 'LinkButton'; $actBtn.Tag = $Check.Id
         $actBtn.Add_Click({ param($s, $e) Invoke-RowAction -Id $s.Tag })
         $btnPanel.Children.Add($actBtn) | Out-Null
     }
     [System.Windows.Controls.Grid]::SetColumn($btnPanel, 3); $grid.Children.Add($btnPanel) | Out-Null
 
-    $G.Rows[$Check.Id] = @{ CheckBox = $cb; Status = $status; Summary = $summary; FixMsg = $fixMsg; Items = $items; FixBtn = $fixBtn }
+    $G.Rows[$Check.Id] = @{ CheckBox = $cb; Status = $status; Summary = $summary; FixMsg = $fixMsg; Items = $items }
     Update-Row -Id $Check.Id
     return $grid
 }
@@ -325,18 +315,8 @@ function Update-FixButton {
     foreach ($id in $G.Selected.Keys) {
         if ($G.Selected[$id] -and $G.Results.ContainsKey($id) -and (Test-Fixable -Check (Get-Check $id) -Result $G.Results[$id])) { $n++ }
     }
-    $G.UI.FixButton.Content = $(if ($n -gt 0) { "選択した $n 項目を修復" } else { '選択した項目を修復' })
+    $G.UI.FixButton.Content = $(if ($n -gt 0) { "$n 件を修復" } else { '修復' })
     $G.UI.FixButton.IsEnabled = ($n -gt 0 -and -not $G.Busy)
-}
-
-function Set-Selection {
-    param([bool]$Value)
-    $G = $Global:PCTuneUpGui
-    foreach ($c in $Global:PCTuneUp.Checks.Values) {
-        if ($G.Results.ContainsKey($c.Id) -and (Test-Fixable -Check $c -Result $G.Results[$c.Id])) { $G.Selected[$c.Id] = $Value }
-    }
-    foreach ($id in @($G.Rows.Keys)) { Update-Row -Id $id }
-    Update-FixButton
 }
 
 function Add-LogLine {
@@ -352,8 +332,6 @@ function Set-Busy {
     $G = $Global:PCTuneUpGui; $ui = $G.UI
     $G.Busy = $Busy
     $ui.ScanButton.IsEnabled = -not $Busy
-    $ui.SelectAllButton.IsEnabled = -not $Busy
-    $ui.SelectNoneButton.IsEnabled = -not $Busy
     $ui.ReportButton.IsEnabled = (-not $Busy) -and ($G.Results.Count -gt 0)
     $ui.GroupsPanel.IsEnabled = -not $Busy
     $ui.FullScanBox.IsEnabled = -not $Busy
@@ -374,7 +352,7 @@ function Start-Work {
     $G.Mode = $Mode; $G.WorkIds = $Ids; $G.WorkDone = 0
     $G.FixBatch = @{}
     foreach ($id in $Ids) { if ($Mode -eq 'scan') { $G.FixResults.Remove($id) } }
-    $label = switch ($Mode) { 'scan' { 'スキャン' } 'fix' { '修復' } default { '実行' } }
+    $label = switch ($Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
     Set-Busy -Busy $true -Status ("{0}中… (0 / {1})" -f $label, $Ids.Count)
     $G.UI.LogExpander.IsExpanded = $true
 
@@ -423,7 +401,7 @@ function Invoke-WorkerTick {
                 Update-Row -Id $item.Id
                 Update-GroupHeader -Group $check.Group
                 Update-Cards
-                $label = switch ($G.Mode) { 'scan' { 'スキャン' } 'fix' { '修復' } default { '実行' } }
+                $label = switch ($G.Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
                 $G.UI.StatusText.Text = '{0}中… ({1} / {2}) {3}' -f $label, $G.WorkDone, $G.WorkIds.Count, $check.Name
             }
             'fix' {
@@ -458,8 +436,8 @@ function Complete-Work {
             if ($r.Status -eq 'recommend') { $rec++ }
             if ((Get-Check $id).Group -in 'junk', 'browser') { $bytes += $r.Bytes }
         }
-        $msg = 'スキャン完了: 問題 {0} 件 / 推奨 {1} 件 / 削除できる不要ファイル {2}。' -f $issues, $rec, (Format-Bytes $bytes)
-        $msg += $(if ($issues -gt 0) { ' 低リスクの問題は選択済みです。「選択した項目を修復」で修復します。' } else { '' })
+        $msg = '点検完了: 問題 {0} 件 / 推奨 {1} 件 / 削除できる不要ファイル {2}。' -f $issues, $rec, (Format-Bytes $bytes)
+        $msg += $(if ($issues -gt 0) { ' 直したい項目にチェックが付いていることを確認して「修復」を押してください。' } else { ' 問題はありません。' })
         Set-Busy -Busy $false -Status $msg
     } else {
         $ok = 0; $ng = 0; $freed = [long]0; $reboot = $false
@@ -497,13 +475,21 @@ function Start-Fix {
         }
     }
     if ($Ids.Count -eq 0) { return }
-    $names = @(); $medium = @()
-    foreach ($id in $Ids) { $c = Get-Check $id; $names += ('・' + $c.Name + ' — ' + $c.FixLabel); if ($c.Risk -ne 'low') { $medium += $c.Name } }
-    $text = "以下の $($Ids.Count) 項目を修復します。`n`n" + ($names -join "`n")
-    if ($medium.Count) { $text += "`n`n注意: 次の項目は設定変更や再起動を伴います。内容を確認してから続行してください。`n" + (($medium | ForEach-Object { '・' + $_ }) -join "`n") }
-    $text += "`n`nレジストリの変更は削除前に .reg ファイルへバックアップされます。続行しますか?"
-    $r = [System.Windows.MessageBox]::Show($text, 'PC TuneUp - 修復の確認', 'YesNo', 'Question')
-    if ($r -ne 'Yes') { return }
+    # 確認ダイアログは、設定変更・再起動・ブラウザー終了など「元に戻しにくい／気付きにくい」副作用を
+    # 伴う項目が含まれるときだけ出す。不要ファイルの削除だけならそのまま実行する。
+    $needConfirm = @()
+    foreach ($id in $Ids) {
+        $c = Get-Check $id
+        if ($c.Risk -ne 'low' -or $c.FixConfirm) {
+            $reason = if ($c.FixConfirm) { $c.FixConfirm } else { $c.FixLabel + ' (設定変更または再起動を伴います)' }
+            $needConfirm += ('・' + $c.Name + ' — ' + $reason)
+        }
+    }
+    if ($needConfirm.Count) {
+        $text = "次の項目は注意が必要です。`n`n" + ($needConfirm -join "`n") + "`n`nこのまま $($Ids.Count) 件の修復を実行しますか?"
+        $r = [System.Windows.MessageBox]::Show($text, 'PC TuneUp - 修復の確認', 'YesNo', 'Question')
+        if ($r -ne 'Yes') { return }
+    }
     Start-Work -Mode fix -Ids $Ids
 }
 
@@ -552,7 +538,7 @@ function Start-Gui {
     $G.Window = $window
     $Global:PCTuneUpWindow = $window
     $G.Styles = @{}
-    foreach ($styleName in 'RowButton', 'GroupExpander', 'PrimaryButton', 'SecondaryButton') {
+    foreach ($styleName in 'LinkButton', 'GroupExpander', 'PrimaryButton', 'SecondaryButton') {
         $G.Styles[$styleName] = $window.FindResource($styleName)
     }
     Write-Log ("GUI 初期化: window={0} styles={1}" -f $window.GetType().Name, ($G.Styles.Keys -join ','))
@@ -563,9 +549,9 @@ function Start-Gui {
     $ui.CatTuneupGlyph.Text = $Global:PCTuneUp.Categories.tuneup.Glyph
     $ui.CatInternetGlyph.Text = $Global:PCTuneUp.Categories.internet.Glyph
     $ui.CatSecurityGlyph.Text = $Global:PCTuneUp.Categories.security.Glyph
-    $ui.HeaderSub.Text = 'Windows 11 の不要ファイル・設定・セキュリティを点検して修復します。無料・追加インストール不要。 v' + $Global:PCTuneUp.Version
+    $ui.HeaderSub.Text = '点検して、見つかった問題を修復します。 v' + $Global:PCTuneUp.Version
     $ui.AdminBadge.Text = $(if (Test-IsAdmin) { '管理者として実行中' } else { '管理者権限なし: 一部の項目はスキップされます' })
-    $ui.StatusText.Text = '「スキャン」を押すと点検を始めます。修復は選択した項目だけに行われ、レジストリは削除前にバックアップされます。'
+    $ui.StatusText.Text = '「点検」を押してください。見つかった問題は「修復」で直します (レジストリは削除前にバックアップされます)。'
 
     foreach ($name in 'CatTuneup', 'CatInternet', 'CatSecurity') {
         $ui[$name].Add_Click({ param($s, $e) $Global:PCTuneUpGui.Category = [string]$s.Tag; Render-Category })
@@ -573,8 +559,6 @@ function Start-Gui {
     $ui.ScanButton.Add_Click({ Start-Scan })
     $ui.FixButton.Add_Click({ Start-Fix })
     $ui.CancelButton.Add_Click({ Stop-Work })
-    $ui.SelectAllButton.Add_Click({ Set-Selection -Value $true })
-    $ui.SelectNoneButton.Add_Click({ Set-Selection -Value $false })
     $ui.ReportButton.Add_Click({ Save-Report })
 
     $G.Timer = New-Object System.Windows.Threading.DispatcherTimer

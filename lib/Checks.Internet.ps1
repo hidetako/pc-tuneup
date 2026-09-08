@@ -74,7 +74,7 @@ function Global:Invoke-BrowserCacheCleanup {
     if ($done.Count) { $parts += ('{0} のキャッシュを削除し {1} を解放しました' -f ($done -join ', '), (Format-Bytes $freed)) }
     if ($closed.Count) { $parts += ('閉じたブラウザー: ' + ($closed -join ', ') + ' (タブは履歴の「最近閉じたタブ」から復元できます)') }
     if ($skipped.Count) {
-        $parts += ('起動中のためスキップ: ' + ($skipped -join ', ') + $(if ($CloseRunning) { ' (閉じられませんでした。手動で閉じてから再実行してください)' } else { ' — ブラウザーを閉じてから「削除」を押すか、「ブラウザーを閉じて削除」を使ってください' }))
+        $parts += ('起動中のためスキップ: ' + ($skipped -join ', ') + $(if ($CloseRunning) { ' (閉じられませんでした。手動で閉じてから再度修復してください)' } else { ' (閉じてから再度修復してください)' }))
     }
     if ($parts.Count -eq 0) { $parts += '削除対象のブラウザーはありません' }
     New-FixResult -Success ($skipped.Count -eq 0) -Message ($parts -join ' / ') -FreedBytes $freed
@@ -85,10 +85,8 @@ Register-Check @{
     Name = 'ブラウザーのキャッシュ'
     Description = 'Edge / Chrome / Brave / Vivaldi / Firefox のキャッシュ (Cookie・履歴・パスワードは残します)'
     FixLabel = '削除'
-    ActionLabel = 'ブラウザーを閉じて削除'
-    ActionConfirm = '起動中のブラウザー (Edge / Chrome など) を閉じてからキャッシュを削除します。開いているタブは、ブラウザーの履歴にある「最近閉じたタブ」から復元できます。よろしいですか?'
-    ActionInWorker = $true
-    Notes = '起動中のブラウザーは「削除」ではスキップされます。閉じてから削除するか、「ブラウザーを閉じて削除」を使ってください。'
+    FixConfirm = '起動中のブラウザーがあれば閉じてから削除します (開いていたタブは履歴の「最近閉じたタブ」から復元できます)'
+    Notes = '起動中のブラウザーは修復時に閉じられます。'
     Scan = {
         $targets = @(Get-BrowserCacheTargets)
         if ($targets.Count -eq 0) { return (New-ScanResult -Status ok -Summary '対応ブラウザーが見つかりません') }
@@ -103,11 +101,10 @@ Register-Check @{
         $status = if ($total -ge $Global:PCTuneUp.JunkIssueBytes) { 'issue' } elseif ($count -gt 0) { 'info' } else { 'ok' }
         $running = @($targets | Where-Object { Test-ProcessRunning $_.Process } | ForEach-Object { $_.Name })
         $summary = '{0:N0} ファイル / {1}' -f $count, (Format-Bytes $total)
-        if ($running.Count -and $count -gt 0) { $summary += ' — 起動中: ' + ($running -join ', ') + ' (閉じてから削除するか「ブラウザーを閉じて削除」を使用)' }
+        if ($running.Count -and $count -gt 0) { $summary += ' — 起動中: ' + ($running -join ', ') + ' (修復時に閉じます)' }
         New-ScanResult -Status $status -Count $count -Bytes $total -Summary $summary -Items $items
     }
-    Fix = { param($ScanResult) Invoke-BrowserCacheCleanup }
-    Action = { Invoke-BrowserCacheCleanup -CloseRunning }
+    Fix = { param($ScanResult) Invoke-BrowserCacheCleanup -CloseRunning }
 }
 
 New-JunkCheck -Id 'browser.inetcache' -Group 'browser' -Name 'Windows のインターネット一時ファイル' `

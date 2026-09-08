@@ -75,7 +75,8 @@ function Write-Log {
 #      Description   = '説明'            必須
 #      Scan          = { New-ScanResult ... }   必須
 #      Fix           = { param($ScanResult) New-FixResult ... }  任意。一括修復の対象
-#      FixLabel      = '修復'            任意
+#      FixLabel      = '修復'            任意。確認ダイアログでの動作名
+#      FixConfirm    = '説明'            任意。指定すると修復前の確認ダイアログにこの説明を出す
 #      Action        = { ... }           任意。設定画面を開くなど手動操作
 #      ActionLabel   = '開く'            任意
 #      ActionConfirm = '確認メッセージ'  任意。指定すると実行前に確認
@@ -106,6 +107,7 @@ function Register-Check {
         Scan          = [scriptblock]$d.Scan
         Fix           = $d['Fix']
         FixLabel      = $(if ($d['FixLabel']) { [string]$d.FixLabel } else { '修復' })
+        FixConfirm    = [string]$d['FixConfirm']
         Action        = $d['Action']
         ActionLabel   = $(if ($d['ActionLabel']) { [string]$d.ActionLabel } else { '開く' })
         ActionConfirm = [string]$d['ActionConfirm']
