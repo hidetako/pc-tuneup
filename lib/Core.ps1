@@ -15,6 +15,13 @@ $Global:PCTuneUp = @{
     JunkIssueBytes = 10MB        # これ以上の不要ファイルがあれば「問題」扱い
 }
 
+# アプリのアイコン (ウィンドウ・タスクバー用)。見つからなければ $null のまま
+$Global:PCTuneUp.IconPath = $null
+try {
+    $iconCandidate = Join-Path (Split-Path -Parent $PSScriptRoot) 'pc_maintenance_icon.ico'
+    if (Test-Path -LiteralPath $iconCandidate) { $Global:PCTuneUp.IconPath = $iconCandidate }
+} catch { }
+
 if ($Global:PCTuneUp.IsWindows) {
     $Global:PCTuneUp.DataDir = Join-Path $env:LOCALAPPDATA 'PCTuneUp'
 } else {

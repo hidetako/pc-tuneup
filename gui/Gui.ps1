@@ -581,6 +581,13 @@ function Start-Gui {
     if (-not $window) { throw "MainWindow.xaml を読み込めませんでした ($xamlPath)" }
     $G.Window = $window
     $Global:PCTuneUpWindow = $window
+    # ウィンドウとタスクバーのアイコン。読み込めなくても起動は続行する
+    if ($Global:PCTuneUp.IconPath) {
+        try {
+            $window.Icon = New-Object System.Windows.Media.Imaging.BitmapImage ([uri]$Global:PCTuneUp.IconPath)
+            Write-Log "アイコン: $($Global:PCTuneUp.IconPath)"
+        } catch { Write-Log "アイコンを読み込めません: $($_.Exception.Message)" 'WARN' }
+    }
     $G.Styles = @{}
     foreach ($styleName in 'LinkButton', 'GroupExpander', 'PrimaryButton', 'SecondaryButton') {
         $G.Styles[$styleName] = $window.FindResource($styleName)

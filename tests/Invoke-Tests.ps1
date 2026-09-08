@@ -220,6 +220,21 @@ foreach ($hex in @('#6B7280', '#1F2937', '#FFFFFF')) {
 }
 Assert (-not ('#12345' -match '^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')) '不正な色を検出できる'
 
+# ---- アイコン ---------------------------------------------------------
+Write-Host '[アイコン]'
+$iconFile = Join-Path $root 'pc_maintenance_icon.ico'
+Assert (Test-Path -LiteralPath $iconFile) 'アイコン pc_maintenance_icon.ico がある'
+if (Test-Path -LiteralPath $iconFile) {
+    $ib = [System.IO.File]::ReadAllBytes($iconFile)
+    # ICO ヘッダー: reserved=0, type=1 (icon), count>=1
+    Assert ($ib.Length -gt 100 -and $ib[0] -eq 0 -and $ib[1] -eq 0 -and $ib[2] -eq 1 -and $ib[3] -eq 0) 'ICO ヘッダーが壊れていない (改行変換されていない)'
+    Assert ($Global:PCTuneUp.IconPath -and (Test-Path -LiteralPath $Global:PCTuneUp.IconPath)) 'Core が IconPath を解決する'
+}
+$gaText = Get-Content -LiteralPath (Join-Path $root '.gitattributes') -Raw
+Assert ($gaText -match '\*\.ico\s+binary') '.gitattributes が .ico をバイナリ扱いにしている'
+$entryText = Get-Content -LiteralPath (Join-Path $root 'PCTuneUp.ps1') -Raw -Encoding UTF8
+Assert ($entryText -match 'CreateShortcut') '-CreateShortcut がある'
+
 # ---- 7. GUI ワーカースクリプトの構文 ----------------------------------
 Write-Host '[GUI]'
 $guiText = Get-Content -LiteralPath (Join-Path $root 'gui\Gui.ps1') -Raw -Encoding UTF8

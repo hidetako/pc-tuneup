@@ -12,6 +12,8 @@
       -Report [path]                点検結果を JSON に保存 (-Scan と併用)
       -InstallSchedule              毎週の自動メンテナンスをタスク スケジューラに登録
       -UninstallSchedule            上記を削除
+      -CreateShortcut               デスクトップにアイコン付きショートカットを作成
+      -RemoveShortcut               上記を削除
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +28,8 @@ param(
     [switch]$Hidden,
     [switch]$InstallSchedule,
     [switch]$UninstallSchedule,
+    [switch]$CreateShortcut,
+    [switch]$RemoveShortcut,
     [switch]$Version
 )
 
@@ -33,7 +37,7 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\Core.ps1')
 Import-Checks
 
-$cliMode = $Scan -or $Fix -or $List -or $Report -or $InstallSchedule -or $UninstallSchedule -or $Version
+$cliMode = $Scan -or $Fix -or $List -or $Report -or $InstallSchedule -or $UninstallSchedule -or $CreateShortcut -or $RemoveShortcut -or $Version
 if ($cliMode) {
     $Global:PCTuneUp.Console = $true
 }
@@ -62,6 +66,31 @@ if ($List) {
             Fix = [bool]$_.Fix; Risk = $_.Risk; Admin = $_.RequiresAdmin; Long = $_.Long
         }
     } | Format-Table -AutoSize
+    return
+}
+
+# ---- ショートカット --------------------------------------------------------
+$shortcutName = 'PC TuneUp.lnk'
+if ($RemoveShortcut) {
+    $p = Join-Path ([Environment]::GetFolderPath('Desktop')) $shortcutName
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force; Write-Host "削除しました: $p" }
+    else { Write-Host 'ショートカットはありません' }
+    return
+}
+if ($CreateShortcut) {
+    # .cmd 自体にはアイコンを設定できないため、アイコン付きの .lnk を作る
+    $target = Join-Path $PSScriptRoot 'PCTuneUp.cmd'
+    $path = Join-Path ([Environment]::GetFolderPath('Desktop')) $shortcutName
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($path)
+    $sc.TargetPath = $target
+    $sc.WorkingDirectory = $PSScriptRoot
+    $sc.Description = 'PC TuneUp - Windows のメンテナンス'
+    $sc.WindowStyle = 7          # 最小化で起動 (コンソールを見せない)
+    if ($Global:PCTuneUp.IconPath) { $sc.IconLocation = $Global:PCTuneUp.IconPath }
+    $sc.Save()
+    Write-Host "ショートカットを作成しました: $path"
+    if (-not $Global:PCTuneUp.IconPath) { Write-Host 'アイコン (pc_maintenance_icon.ico) が見つからないため既定のアイコンになります' -ForegroundColor Yellow }
     return
 }
 

@@ -35,7 +35,17 @@ git clone https://github.com/hidetako/pc-tuneup.git C:\dev\pc-tuneup
 
 ### 2. 起動
 
-`PCTuneUp.cmd` をダブルクリックします。管理者権限を求めるダイアログが出るので「はい」を押してください
+`PCTuneUp.cmd` をダブルクリックします。
+
+デスクトップにアイコン付きのショートカットを作るには、次を実行します
+(`.cmd` 自体にはアイコンを設定できないため、ショートカット経由になります)。
+
+```powershell
+.\PCTuneUp.ps1 -CreateShortcut
+```
+
+削除は `-RemoveShortcut` です。
+管理者権限を求めるダイアログが出るので「はい」を押してください
 (管理者権限が無いと Windows フォルダーやレジストリの HKLM に関わる項目はスキップされます)。
 
 初回に SmartScreen の「WindowsによってPCが保護されました」が出た場合は
@@ -131,6 +141,7 @@ git clone https://github.com/hidetako/pc-tuneup.git C:\dev\pc-tuneup
 ```text
 pc-tuneup/
 ├── PCTuneUp.cmd          ダブルクリック用ランチャー (昇格して GUI を開く)
+├── pc_maintenance_icon.ico  アプリのアイコン (ウィンドウ・タスクバー・ショートカット)
 ├── PCTuneUp.ps1          エントリー (GUI / CLI / スケジュール登録)
 ├── lib/
 │   ├── Core.ps1          チェック登録・実行・ファイル削除・レジストリバックアップ・ログ
