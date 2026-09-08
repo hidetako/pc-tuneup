@@ -18,7 +18,7 @@ Lenovo Smart Performance の 3 カテゴリに合わせて、46 項目を点検�
 | **インターネット** | ブラウザーの不要データ | Edge / Chrome / Brave / Vivaldi / Firefox のキャッシュ、Windows の INetCache |
 | | ネットワーク設定 | DNS / HTTPS 接続の健全性、Wi-Fi アダプターの省電力設定、プロキシの残骸 |
 | **マルウェアとセキュリティ** | ウイルス対策とファイアウォール | リアルタイム保護、定義の更新、クイック スキャン、PUA 保護、ファイアウォール |
-| | Windows Update | 未適用の更新のダウンロードと適用、再起動待ちの検出 |
+| | Windows Update | 更新の滞りを判定し、修復で検索・ダウンロード・適用、再起動待ちの検出 |
 | | システム保護 | UAC、SmartScreen、hosts ファイルの改変 |
 
 項目の一覧は `PCTuneUp.cmd -List` で確認できます。

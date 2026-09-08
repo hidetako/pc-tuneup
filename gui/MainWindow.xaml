@@ -80,18 +80,19 @@
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="Foreground" Value="{StaticResource Accent}"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="4,2"/>
+      <Setter Property="Padding" Value="6,3"/>
+      <Setter Property="Margin" Value="4,0,0,0"/>
       <Setter Property="FontSize" Value="12"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border Background="Transparent" Padding="{TemplateBinding Padding}">
-              <TextBlock x:Name="Txt" Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"/>
+            <Border x:Name="Bd" Background="Transparent" BorderBrush="{StaticResource Accent}" BorderThickness="0,0,0,1" Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Txt" Property="TextDecorations" Value="Underline"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Txt" Property="Opacity" Value="0.4"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentLight}"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Bd" Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>

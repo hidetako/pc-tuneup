@@ -136,30 +136,35 @@ Register-Check @{
 
 Register-Check @{
     Id = 'update.pending'; Group = 'update'
-    Name = '未適用の更新プログラム'
-    Description = 'Windows Update で利用可能になっているがまだ入っていない更新'
-    RequiresAdmin = $true; Long = $true; Risk = 'medium'; FixLabel = 'ダウンロードして適用'
+    Name = '更新プログラムの適用状況'
+    Description = 'Windows Update の最終確認日と最終インストール日から、更新が滞っていないかを判定'
+    RequiresAdmin = $true; FixLabel = '更新を確認して適用'
+    FixConfirm = '更新プログラムを検索し、ダウンロードして適用します (数分〜数十分かかり、再起動が必要になることがあります。大型の機能更新は対象外)'
     ActionLabel = 'Windows Update を開く'
-    Notes = '大型の機能更新 (バージョンアップ) は対象外です。適用後は再起動が必要になることがあります。'
+    Notes = '判定は Windows が記録している日付を使うため一瞬で終わります。実際の検索と適用は「修復」で行います。'
     Scan = {
-        $session = New-Object -ComObject Microsoft.Update.Session
-        $searcher = $session.CreateUpdateSearcher()
-        $result = $searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
-        $updates = @()
-        for ($i = 0; $i -lt $result.Updates.Count; $i++) {
-            $u = $result.Updates.Item($i)
-            $isUpgrade = $false
-            for ($c = 0; $c -lt $u.Categories.Count; $c++) { if ($u.Categories.Item($c).Name -match 'Upgrades|アップグレード') { $isUpgrade = $true } }
-            if ($isUpgrade) { continue }
-            $updates += [pscustomobject]@{ Title = $u.Title; Size = [long]$u.MaxDownloadSize; Index = $i }
+        $au = New-Object -ComObject Microsoft.Update.AutoUpdate
+        $res = $au.Results
+        $floor = Get-Date '2000-01-01'
+        $search = $null; $install = $null
+        try { if ($res.LastSearchSuccessDate -gt $floor) { $search = [datetime]$res.LastSearchSuccessDate } } catch { }
+        try { if ($res.LastInstallationSuccessDate -gt $floor) { $install = [datetime]$res.LastInstallationSuccessDate } } catch { }
+        $fmt = { param($d) if ($d) { $d.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { '記録なし' } }
+        $items = @('最終確認: ' + (& $fmt $search), '最終インストール: ' + (& $fmt $install))
+        $now = Get-Date
+        $searchAge = if ($search) { ($now - $search.ToLocalTime()).TotalDays } else { 999 }
+        $installAge = if ($install) { ($now - $install.ToLocalTime()).TotalDays } else { 999 }
+        if ($installAge -gt 45 -or $searchAge -gt 14) {
+            New-ScanResult -Status issue -Count 1 -Summary ('更新が滞っています (最終インストール: {0} / 最終確認: {1})' -f (& $fmt $install), (& $fmt $search)) -Items $items
+        } elseif ($searchAge -gt 7) {
+            New-ScanResult -Status recommend -Count 1 -Summary ('しばらく更新を確認していません (最終確認: {0})' -f (& $fmt $search)) -Items $items
+        } else {
+            New-ScanResult -Status ok -Summary ('最終確認 {0} / 最終インストール {1}' -f (& $fmt $search), (& $fmt $install)) -Items $items
         }
-        if ($updates.Count -eq 0) { return (New-ScanResult -Status ok -Summary '未適用の更新はありません') }
-        $bytes = [long]0; foreach ($u in $updates) { $bytes += $u.Size }
-        New-ScanResult -Status issue -Count $updates.Count -Bytes $bytes -Summary ('{0} 件の更新が未適用です ({1})' -f $updates.Count, (Format-Bytes $bytes)) `
-            -Items @($updates | ForEach-Object { $_.Title })
     }
     Fix = {
         param($ScanResult)
+        Write-Log '  Windows Update で更新を検索中 (1〜2 分)…'
         $session = New-Object -ComObject Microsoft.Update.Session
         $searcher = $session.CreateUpdateSearcher()
         $result = $searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
@@ -173,7 +178,7 @@ Register-Check @{
             [void]$coll.Add($u)
             Write-Log "  対象: $($u.Title)"
         }
-        if ($coll.Count -eq 0) { return (New-FixResult -Success $true -Message '適用する更新はありません') }
+        if ($coll.Count -eq 0) { return (New-FixResult -Success $true -Message '検索しましたが、適用する更新はありません (最新の状態です)') }
         Write-Log '  ダウンロード中…'
         $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $coll
         $dr = $downloader.Download()
