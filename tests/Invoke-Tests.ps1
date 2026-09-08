@@ -191,6 +191,30 @@ Assert ($att -eq 2) "要確認は未選択の問題 (中リスク + 手動) ($at
 $Global:PCTuneUpGui.Selected['a.rec'] = $true
 Assert ((Get-FixQueuedCount) -eq 2) 'チェックを増やすと修復件数が増える'
 Assert ((Get-AttentionCount) -eq 2) '推奨項目のチェックは要確認件数に影響しない'
+
+# 並べ替え: 修復対象 → 要確認 → エラー → 推奨 → 確認 → 未点検 → 問題なし
+$Global:PCTuneUpGui.Results['a.err'] = (New-ScanResult -Status error)
+$Global:PCTuneUpGui.Results['a.ok']  = (New-ScanResult -Status ok)
+$Global:PCTuneUpGui.Results['a.info'] = (New-ScanResult -Status info)
+Register-Check @{ Id = 'a.err';  Group = 'junk'; Name='e'; Description='e'; Scan={New-ScanResult}; Action={} }
+Register-Check @{ Id = 'a.ok';   Group = 'junk'; Name='o'; Description='o'; Scan={New-ScanResult}; Fix={param($r) New-FixResult} }
+Register-Check @{ Id = 'a.info'; Group = 'junk'; Name='i'; Description='i'; Scan={New-ScanResult}; Action={} }
+Register-Check @{ Id = 'a.new';  Group = 'junk'; Name='w'; Description='w'; Scan={New-ScanResult}; Action={} }
+$Global:PCTuneUpGui.Selected['a.rec'] = $false
+Assert ((Get-CheckRank -Check (Get-Check 'a.low')) -eq 0) '修復対象のランクは 0'
+Assert ((Get-CheckRank -Check (Get-Check 'a.med')) -eq 1) '未チェックの問題のランクは 1'
+Assert ((Get-CheckRank -Check (Get-Check 'a.man')) -eq 1) '自動修復できない問題のランクは 1'
+Assert ((Get-CheckRank -Check (Get-Check 'a.err')) -eq 2) 'エラーのランクは 2'
+Assert ((Get-CheckRank -Check (Get-Check 'a.rec')) -eq 3) '推奨のランクは 3'
+Assert ((Get-CheckRank -Check (Get-Check 'a.info')) -eq 4) '確認のランクは 4'
+Assert ((Get-CheckRank -Check (Get-Check 'a.new')) -eq 5) '未点検のランクは 5'
+Assert ((Get-CheckRank -Check (Get-Check 'a.ok')) -eq 6) '問題なしのランクは 6'
+$mixed = @('a.ok', 'a.man', 'a.low', 'a.rec', 'a.err') | ForEach-Object { Get-Check $_ }
+$sortedIds = @(Sort-ByRank -Items $mixed -RankOf { param($c) Get-CheckRank -Check $c } | ForEach-Object { $_.Id })
+Assert (($sortedIds -join ',') -eq 'a.low,a.man,a.err,a.rec,a.ok') "重要度順に並ぶ ($($sortedIds -join ','))"
+$tie = @('a.man', 'a.med') | ForEach-Object { Get-Check $_ }
+$tieIds = @(Sort-ByRank -Items $tie -RankOf { param($c) Get-CheckRank -Check $c } | ForEach-Object { $_.Id })
+Assert (($tieIds -join ',') -eq 'a.man,a.med') '同じ重要度なら元の順序を保つ'
 try { Register-Check @{ Id = 'junk.__test'; Group = 'junk'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false 'ID 重複は例外' } catch { Assert $true 'ID 重複は例外' }
 try { Register-Check @{ Id = 'x.y'; Group = 'nope'; Name = 'd'; Description = 'd'; Scan = { } }; Assert $false '不明グループは例外' } catch { Assert $true '不明グループは例外' }
 

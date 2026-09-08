@@ -121,6 +121,42 @@ function Get-FixQueuedCount {
     return $n
 }
 
+function Get-CheckRank {
+    <#
+      並べ替え用の重要度。小さいほど上に来る。
+        0 修復対象 (チェック済みで自動修復できる問題)
+        1 要確認   (自動修復できない、または未チェックの問題)
+        2 エラー   (点検自体が失敗した項目)
+        3 推奨 / 4 確認 / 5 未点検 / 6 問題なし / 7 対象外・スキップ
+    #>
+    param([Parameter(Mandatory)]$Check)
+    $G = $Global:PCTuneUpGui
+    if (-not $G.Results.ContainsKey($Check.Id)) { return 5 }
+    $r = $G.Results[$Check.Id]
+    switch ($r.Status) {
+        'issue' {
+            $queued = ($G.Selected.ContainsKey($Check.Id) -and $G.Selected[$Check.Id] -and (Test-Fixable -Check $Check -Result $r))
+            return $(if ($queued) { 0 } else { 1 })
+        }
+        'error'     { return 2 }
+        'recommend' { return 3 }
+        'info'      { return 4 }
+        'ok'        { return 6 }
+        default     { return 7 }
+    }
+}
+
+function Sort-ByRank {
+    # 重要度順に並べ、同じ重要度なら元の登録順を保つ (PowerShell 5.1 の Sort-Object は不安定なので順序キーを添える)
+    param([object[]]$Items, [scriptblock]$RankOf)
+    $i = 0
+    $keyed = foreach ($it in $Items) {
+        [pscustomobject]@{ Item = $it; Rank = [int](& $RankOf $it); Order = $i }
+        $i++
+    }
+    @($keyed | Sort-Object Rank, Order | ForEach-Object { $_.Item })
+}
+
 function Get-AttentionCount {
     # 問題だが今は修復対象になっていない件数 = 自動修復できない問題、または中リスクで未選択の問題。
     param([string]$Category, [string]$Group)
@@ -298,11 +334,22 @@ function Render-Category {
     $G = $Global:PCTuneUpGui; $ui = $G.UI
     $ui.GroupsPanel.Children.Clear()
     $G.Rows = @{}; $G.GroupHeaders = @{}
-    foreach ($gk in $Global:PCTuneUp.Groups.Keys) {
+    # 点検後は、問題のある項目とグループが上に来るように並べ替える (未点検なら定義順のまま)
+    $groupKeys = @($Global:PCTuneUp.Groups.Keys | Where-Object { $Global:PCTuneUp.Groups[$_].Category -eq $G.Category })
+    if (Test-CategoryScanned $G.Category) {
+        $groupKeys = Sort-ByRank -Items $groupKeys -RankOf {
+            param($k)
+            $ranks = @(Get-Checks -Group $k -IncludeLong | ForEach-Object { Get-CheckRank -Check $_ })
+            if ($ranks.Count) { ($ranks | Measure-Object -Minimum).Minimum } else { 7 }
+        }
+    }
+    foreach ($gk in $groupKeys) {
         $grp = $Global:PCTuneUp.Groups[$gk]
-        if ($grp.Category -ne $G.Category) { continue }
         $checks = @(Get-Checks -Group $gk -IncludeLong)
         if ($checks.Count -eq 0) { continue }
+        if (Test-CategoryScanned $G.Category) {
+            $checks = Sort-ByRank -Items $checks -RankOf { param($c) Get-CheckRank -Check $c }
+        }
 
         $exp = New-Object System.Windows.Controls.Expander
         $exp.Style = Get-GuiStyle 'GroupExpander'; $exp.Tag = $gk
