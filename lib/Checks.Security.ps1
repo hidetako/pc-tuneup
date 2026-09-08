@@ -68,7 +68,8 @@ Register-Check @{
     Id = 'defender.quickscan'; Group = 'defender'
     Name = 'ウイルス スキャン'
     Description = '直近 7 日以内にクイック スキャンが実行されているか'
-    RequiresAdmin = $true; Long = $true; FixLabel = 'クイック スキャン実行'
+    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = 'クイック スキャン実行'
+    FixConfirm = 'Defender のクイック スキャンを実行します (5〜15 分。開始すると途中で止められません)'
     Notes = 'クイック スキャンは 5〜15 分かかります。'
     Scan = {
         $s = Get-DefenderStatus
@@ -138,7 +139,7 @@ Register-Check @{
     Id = 'update.pending'; Group = 'update'
     Name = '更新プログラムの適用状況'
     Description = 'Windows Update の最終確認日と最終インストール日から、更新が滞っていないかを判定'
-    RequiresAdmin = $true; FixLabel = '更新を確認して適用'
+    RequiresAdmin = $true; LongFix = $true; FixLabel = '更新を確認して適用'
     FixConfirm = '更新プログラムを検索し、ダウンロードして適用します (数分〜数十分かかり、再起動が必要になることがあります。大型の機能更新は対象外)'
     ActionLabel = 'Windows Update を開く'
     Notes = '判定は Windows が記録している日付を使うため一瞬で終わります。実際の検索と適用は「修復」で行います。'

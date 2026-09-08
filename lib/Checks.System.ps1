@@ -6,7 +6,8 @@ Register-Check @{
     Id = 'system.component-health'; Group = 'system'
     Name = 'システムイメージの健全性 (DISM)'
     Description = 'Windows のコンポーネントストアに破損の記録がないか'
-    RequiresAdmin = $true; FixLabel = '修復 (DISM)'
+    RequiresAdmin = $true; LongFix = $true; FixLabel = '修復 (DISM)'
+    FixConfirm = 'DISM でシステムイメージを修復します (10〜30 分。開始すると途中で止められません。インターネット接続が必要です)'
     Notes = '修復には Windows Update から正常なファイルを取得するためインターネット接続が必要で、10〜30 分かかることがあります。'
     Scan = {
         $r = Repair-WindowsImage -Online -CheckHealth -ErrorAction Stop
@@ -30,7 +31,8 @@ Register-Check @{
     Id = 'system.sfc'; Group = 'system'
     Name = 'システムファイルの整合性 (SFC)'
     Description = '保護されたシステムファイルの改変・破損を検査して修復'
-    RequiresAdmin = $true; Long = $true; FixLabel = '検査と修復 (sfc /scannow)'
+    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = '検査と修復 (sfc /scannow)'
+    FixConfirm = 'sfc /scannow でシステムファイルを検査・修復します (5〜15 分。開始すると途中で止められません)'
     Notes = 'sfc /scannow は 5〜15 分かかります。'
     Scan = {
         $log = Join-EnvPath $env:SystemRoot 'Logs\CBS\CBS.log'
@@ -76,7 +78,8 @@ Register-Check @{
     Id = 'system.disk-errors'; Group = 'system'
     Name = 'ディスクのファイルシステム エラー'
     Description = '各ドライブをオンラインで検査 (chkdsk /scan 相当)'
-    RequiresAdmin = $true; Long = $true; FixLabel = '修復を予約'
+    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = '修復を予約'
+    FixConfirm = 'ディスクの修復を行います (システムドライブは次回の再起動時。データドライブはその場で数分かかります)'
     Notes = 'システムドライブの修復は次回の再起動時に実行されます。'
     Scan = {
         $vols = @(Get-Volume -ErrorAction Stop | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'NTFS' -and $_.DriveType -eq 'Fixed' })

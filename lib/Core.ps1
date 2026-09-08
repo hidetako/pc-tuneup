@@ -91,6 +91,7 @@ function Write-Log {
 #      Risk          = 'low'|'medium'    任意 (medium は既定で未選択)
 #      RequiresAdmin = $true             任意
 #      Long          = $true             任意。時間のかかる検査 (詳細スキャン時のみ)
+#      LongFix       = $true             任意。修復に数分以上かかる。既定では選択せず、確認画面で所要時間を明示する
 #      Notes         = '補足'            任意
 #  }
 # ---------------------------------------------------------------------
@@ -122,6 +123,7 @@ function Register-Check {
         Risk          = $risk
         RequiresAdmin = [bool]$d['RequiresAdmin']
         Long          = [bool]$d['Long']
+        LongFix       = [bool]$d['LongFix']
         Notes         = [string]$d['Notes']
     }
     $Global:PCTuneUp.Checks[$check.Id] = $check

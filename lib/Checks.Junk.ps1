@@ -114,7 +114,8 @@ Register-Check @{
     Id = 'junk.windows-old'; Group = 'junk'
     Name = '以前の Windows インストール'
     Description = 'Windows.old や $WINDOWS.~BT などアップグレードの残骸 (削除すると前のバージョンに戻せなくなります)'
-    Risk = 'medium'; RequiresAdmin = $true; FixLabel = '削除'
+    Risk = 'medium'; RequiresAdmin = $true; LongFix = $true; FixLabel = '削除'
+    FixConfirm = 'ディスク クリーンアップで削除します (数分〜十数分。削除すると前の Windows に戻せなくなります)'
     Notes = 'Windows 標準の「ディスク クリーンアップ」を使って安全に削除します。数分かかることがあります。'
     Scan = {
         $paths = @('Windows.old', '$WINDOWS.~BT', '$WINDOWS.~WS', '$GetCurrent', '$SysReset') |
@@ -155,7 +156,8 @@ Register-Check @{
     Id = 'junk.component-store'; Group = 'junk'
     Name = 'Windows Update のクリーンアップ (コンポーネントストア)'
     Description = '置き換え済みの古いシステムコンポーネントを整理 (WinSxS)'
-    RequiresAdmin = $true; Long = $true; FixLabel = 'クリーンアップ'
+    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = 'クリーンアップ'
+    FixConfirm = 'DISM でコンポーネントストアを整理します (5〜20 分。開始すると途中で止められません)'
     Notes = 'DISM の AnalyzeComponentStore / StartComponentCleanup を使います。それぞれ数分かかります。'
     Scan = {
         $r = Invoke-Exe -File 'Dism.exe' -Arguments '/Online', '/Cleanup-Image', '/AnalyzeComponentStore', '/English' -Quiet

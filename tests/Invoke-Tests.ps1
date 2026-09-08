@@ -169,6 +169,21 @@ Assert ($ar2.Success -and $ar2.Message -match '開く') 'Action が結果を返�
 Assert (-not (Invoke-CheckAction -Id 'system.__nofix').Success) 'Action の無い項目は失敗を返す'
 Assert ([bool](Get-Check 'browser.cache').FixConfirm) 'browser.cache は修復前に確認文を出す'
 
+Write-Host '[時間のかかる修復]'
+foreach ($lid in 'system.component-health', 'system.sfc', 'system.disk-errors', 'junk.component-store', 'junk.windows-old', 'defender.quickscan', 'update.pending') {
+    $lc = Get-Check $lid
+    Assert ($lc.LongFix) "$lid は LongFix"
+    Assert ([bool]$lc.FixConfirm) "$lid は所要時間を確認画面に出す"
+}
+Assert (-not (Get-Check 'junk.user-temp').LongFix) '一時ファイルの削除は LongFix ではない'
+# Gui.ps1: ウィンドウを閉じるときに UI スレッドを止めない (Stop() は使わない)
+$guiSrc = Get-Content -LiteralPath (Join-Path $root 'gui\Gui.ps1') -Raw -Encoding UTF8
+$closing = [regex]::Match($guiSrc, 'Add_Closing\(\{.*?\}\)', 'Singleline').Value
+Assert ($closing -match 'BeginStop') 'Closing は BeginStop を使う'
+Assert ($closing -notmatch '\$G\.PS\.Stop\(\)') 'Closing は同期 Stop() を使わない'
+Assert ($guiSrc -match "Kind = 'begin'") 'ワーカーは項目の開始を通知する'
+Assert ($guiSrc -match 'Format-Elapsed') '経過時間を表示する'
+
 # 修復件数とカード赤バッジの一致 (Get-FixQueuedCount) を検証する
 . (Join-Path $root 'gui\Gui.ps1')
 $Global:PCTuneUpGui.Results = @{
@@ -320,7 +335,9 @@ while ($resQ.TryDequeue([ref]$tmpItem)) { $got += $tmpItem }
 Assert (@($got | Where-Object { $_.Kind -eq 'scan' -and $_.Id -eq 'junk.user-temp' }).Count -eq 1) 'junk.user-temp の結果がキューに届く'
 Assert (@($got | Where-Object { $_.Kind -eq 'scan' -and $_.Id -eq 'junk.wer' }).Count -eq 1) 'junk.wer の結果がキューに届く'
 Assert (($got | Select-Object -Last 1).Kind -eq 'done') '最後に done が届く'
-$scanItem = $got | Where-Object { $_.Id -eq 'junk.user-temp' } | Select-Object -First 1
+Assert (@($got | Where-Object { $_.Kind -eq 'begin' }).Count -eq 2) '各項目の開始が通知される'
+Assert ((@($got | Where-Object { $_.Id -eq 'junk.user-temp' })[0]).Kind -eq 'begin') '開始通知は結果より先に届く'
+$scanItem = $got | Where-Object { $_.Kind -eq 'scan' -and $_.Id -eq 'junk.user-temp' } | Select-Object -First 1
 Assert ($scanItem.Result.Status -in 'ok', 'info', 'issue') "結果に Status がある ($($scanItem.Result.Status))"
 $logLines = @(); $tmpLine = $null
 while ($logQ.TryDequeue([ref]$tmpLine)) { $logLines += $tmpLine }

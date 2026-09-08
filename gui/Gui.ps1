@@ -19,6 +19,8 @@ Import-Checks
 $Global:PCTuneUp.LogQueue = $LogQueue
 foreach ($id in $Ids) {
     try {
+        # UI 側が「今どの項目を処理中か」を表示できるよう、開始を先に知らせる
+        $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'begin'; Id = $id })
         if ($Mode -eq 'fix') {
             $prev = $null
             if ($ScanResults -and $ScanResults.ContainsKey($id)) { $prev = $ScanResults[$id] }
@@ -49,6 +51,12 @@ function Get-GuiStyle {
     if (-not $G.Styles) { $G.Styles = @{} }
     $G.Styles[$Name] = $style
     return $style
+}
+
+function Format-Elapsed {
+    param([TimeSpan]$Span)
+    if ($Span.TotalHours -ge 1) { return ('{0}:{1:00}:{2:00}' -f [int]$Span.TotalHours, $Span.Minutes, $Span.Seconds) }
+    return ('{0}:{1:00}' -f [int]$Span.TotalMinutes, $Span.Seconds)
 }
 
 function New-Brush {
@@ -296,8 +304,11 @@ function New-CheckRow {
         $notes.Margin = '0,3,0,0'
         $stack.Children.Add($notes) | Out-Null
     }
-    if ($Check.Risk -ne 'low') {
-        $tagText = New-Text -Text '設定変更や再起動を伴うため、既定ではチェックを外しています' -Size 11 -Color $G.Colors.recommend
+    $tagMsg = $null
+    if ($Check.LongFix) { $tagMsg = '修復に時間がかかり途中で止められないため、既定ではチェックを外しています' }
+    elseif ($Check.Risk -ne 'low') { $tagMsg = '設定変更や再起動を伴うため、既定ではチェックを外しています' }
+    if ($tagMsg) {
+        $tagText = New-Text -Text $tagMsg -Size 11 -Color $G.Colors.recommend
         $tagText.Margin = '0,2,0,0'
         $stack.Children.Add($tagText) | Out-Null
     }
@@ -432,6 +443,7 @@ function Start-Work {
     $G = $Global:PCTuneUpGui
     if ($G.Busy -or -not $Ids -or $Ids.Count -eq 0) { return }
     $G.Mode = $Mode; $G.WorkIds = $Ids; $G.WorkDone = 0
+    $G.WorkStarted = Get-Date; $G.ItemStarted = $null; $G.CurrentName = ''; $G.NextHeartbeat = (Get-Date).AddSeconds(60)
     $G.FixBatch = @{}
     foreach ($id in $Ids) { if ($Mode -eq 'scan') { $G.FixResults.Remove($id) } }
     $label = switch ($Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
@@ -471,11 +483,16 @@ function Invoke-WorkerTick {
     while ($G.ResultQueue.TryDequeue([ref]$item)) {
         if (-not $item -or -not $item.PSObject.Properties['Kind']) { continue }
         switch ($item.Kind) {
+            'begin' {
+                $G.ItemStarted = Get-Date
+                $G.NextHeartbeat = (Get-Date).AddSeconds(60)
+                $G.CurrentName = (Get-Check $item.Id).Name
+            }
             'scan' {
                 $G.Results[$item.Id] = $item.Result
                 $check = Get-Check $item.Id
                 if ($G.Mode -eq 'scan') {
-                    $G.Selected[$item.Id] = [bool]($item.Result.Status -eq 'issue' -and $check.Risk -eq 'low' -and $check.Fix)
+                    $G.Selected[$item.Id] = [bool]($item.Result.Status -eq 'issue' -and $check.Risk -eq 'low' -and $check.Fix -and -not $check.LongFix)
                 } elseif (-not (Test-Fixable -Check $check -Result $item.Result)) {
                     $G.Selected[$item.Id] = $false
                 }
@@ -483,8 +500,6 @@ function Invoke-WorkerTick {
                 Update-Row -Id $item.Id
                 Update-GroupHeader -Group $check.Group
                 Update-Cards
-                $label = switch ($G.Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
-                $G.UI.StatusText.Text = '{0}中… ({1} / {2}) {3}' -f $label, $G.WorkDone, $G.WorkIds.Count, $check.Name
             }
             'fix' {
                 $G.FixResults[$item.Id] = $item.Result
@@ -492,6 +507,26 @@ function Invoke-WorkerTick {
                 Update-Row -Id $item.Id
             }
         }
+    }
+
+    # 経過時間を毎回描き直す。DISM のように何分も出力が無い処理でも、動いていることが分かるようにする
+    if ($G.PS -and $G.WorkStarted) {
+        $now = Get-Date
+        $label = switch ($G.Mode) { 'scan' { '点検' } 'fix' { '修復' } default { '実行' } }
+        $pos = [math]::Min($G.WorkDone + 1, $G.WorkIds.Count)
+        $text = '{0}中… ({1} / {2})' -f $label, $pos, $G.WorkIds.Count
+        if ($G.CurrentName) { $text += ' ' + $G.CurrentName }
+        if ($G.ItemStarted) {
+            $itemEl = $now - $G.ItemStarted
+            if ($itemEl.TotalSeconds -ge 5) { $text += ' — この項目 ' + (Format-Elapsed $itemEl) }
+            if ($now -ge $G.NextHeartbeat) {
+                Add-LogLine ("{0} [INFO]   実行中… {1} ({2} 経過)" -f $now.ToString('HH:mm:ss'), $G.CurrentName, (Format-Elapsed $itemEl))
+                $G.NextHeartbeat = $now.AddSeconds(60)
+            }
+        }
+        $text += ' / 全体 ' + (Format-Elapsed ($now - $G.WorkStarted))
+        if ($G.Cancelled) { $text = '中止待ち… ' + $text }
+        $G.UI.StatusText.Text = $text
     }
 
     if ($completed) {
@@ -545,7 +580,8 @@ function Stop-Work {
     $G = $Global:PCTuneUpGui
     if (-not $G.PS) { return }
     $G.Cancelled = $true
-    $G.UI.StatusText.Text = '中止しています… (実行中のコマンドが終わるまでお待ちください)'
+    $G.UI.StatusText.Text = '中止を要求しました。DISM や sfc などの実行中コマンドは途中で止められないため、終わるまで待ちます。ウィンドウはいつでも閉じられます。'
+    Add-LogLine ("{0} [WARN] 中止を要求しました (実行中のコマンドは最後まで動きます)" -f (Get-Date -Format 'HH:mm:ss'))
     try { $G.PS.BeginStop($null, $null) | Out-Null } catch { }
 }
 
@@ -568,16 +604,22 @@ function Start-Fix {
     if ($Ids.Count -eq 0) { return }
     # 確認ダイアログは、設定変更・再起動・ブラウザー終了など「元に戻しにくい／気付きにくい」副作用を
     # 伴う項目が含まれるときだけ出す。不要ファイルの削除だけならそのまま実行する。
-    $needConfirm = @()
+    $needConfirm = @(); $longOnes = @()
     foreach ($id in $Ids) {
         $c = Get-Check $id
-        if ($c.Risk -ne 'low' -or $c.FixConfirm) {
+        if ($c.LongFix) { $longOnes += ('・' + $c.Name + ' — ' + $(if ($c.FixConfirm) { $c.FixConfirm } else { '完了まで時間がかかります' })) }
+        elseif ($c.Risk -ne 'low' -or $c.FixConfirm) {
             $reason = if ($c.FixConfirm) { $c.FixConfirm } else { $c.FixLabel + ' (設定変更または再起動を伴います)' }
             $needConfirm += ('・' + $c.Name + ' — ' + $reason)
         }
     }
-    if ($needConfirm.Count) {
-        $text = "次の項目は注意が必要です。`n`n" + ($needConfirm -join "`n") + "`n`nこのまま $($Ids.Count) 件の修復を実行しますか?"
+    if ($needConfirm.Count -or $longOnes.Count) {
+        $text = ''
+        if ($longOnes.Count) {
+            $text += "次の項目は完了まで時間がかかり、途中で止められません (Windows のコマンドが最後まで動きます)。`n`n" + ($longOnes -join "`n") + "`n`n"
+        }
+        if ($needConfirm.Count) { $text += "次の項目は設定変更や再起動を伴います。`n`n" + ($needConfirm -join "`n") + "`n`n" }
+        $text += "このまま $($Ids.Count) 件の修復を実行しますか?"
         $r = [System.Windows.MessageBox]::Show($text, 'PC TuneUp - 修復の確認', 'YesNo', 'Question')
         if ($r -ne 'Yes') { return }
     }
@@ -666,7 +708,10 @@ function Start-Gui {
     $window.Add_Closing({
         param($s, $e)
         $G = $Global:PCTuneUpGui
-        if ($G.PS) { try { $G.PS.Stop() } catch { } }
+        # Stop() は完了するまで戻らないため、DISM のような中断できない処理の最中だと
+        # UI スレッドごと固まってウィンドウを閉じられなくなる。停止要求だけ出して待たない。
+        if ($G.Timer) { try { $G.Timer.Stop() } catch { } }
+        if ($G.PS) { try { $G.PS.BeginStop($null, $null) | Out-Null } catch { } }
     })
 
     Render-Category
