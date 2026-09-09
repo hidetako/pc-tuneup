@@ -99,7 +99,7 @@ Register-Check @{
     Scan = {
         $ssd = @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.MediaType -eq 'SSD' })
         if ($ssd.Count -eq 0) { return (New-ScanResult -Status na -Summary 'SSD が検出されないため対象外') }
-        $r = Invoke-Exe -File 'fsutil.exe' -Arguments 'behavior', 'query', 'DisableDeleteNotify' -Quiet
+        $r = Invoke-Exe -File 'fsutil.exe' -Arguments 'behavior', 'query', 'DisableDeleteNotify' -Quiet -TimeoutSeconds 60
         $line = $r.Lines | Where-Object { $_ -match 'NTFS\s+DisableDeleteNotify\s*=\s*(\d)' } | Select-Object -First 1
         if (-not $line) { $line = $r.Lines | Where-Object { $_ -match 'DisableDeleteNotify\s*=\s*(\d)' } | Select-Object -First 1 }
         if (-not $line) { throw 'fsutil の出力を解釈できません' }
@@ -160,8 +160,8 @@ Register-Check @{
         }
         Set-Service -Name W32Time -StartupType Manual -ErrorAction SilentlyContinue
         Start-Service -Name W32Time -ErrorAction SilentlyContinue
-        Invoke-Exe -File 'w32tm.exe' -Arguments '/config', '/update' -Quiet | Out-Null
-        Invoke-Exe -File 'w32tm.exe' -Arguments '/resync', '/nowait' -Quiet | Out-Null
+        Invoke-Exe -File 'w32tm.exe' -Arguments '/config', '/update' -Quiet -TimeoutSeconds 120 | Out-Null
+        Invoke-Exe -File 'w32tm.exe' -Arguments '/resync', '/nowait' -Quiet -TimeoutSeconds 120 | Out-Null
         New-FixResult -Success $true -Message '時刻の自動同期を有効にし、同期を開始しました'
     }
 }

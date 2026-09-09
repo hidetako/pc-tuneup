@@ -147,9 +147,9 @@ Register-Check @{
     Fix = {
         param($ScanResult)
         Clear-DnsClientCache -ErrorAction SilentlyContinue
-        Invoke-Exe -File 'ipconfig.exe' -Arguments '/flushdns' -Quiet | Out-Null
-        Invoke-Exe -File 'netsh.exe' -Arguments 'winsock', 'reset' -Quiet | Out-Null
-        Invoke-Exe -File 'netsh.exe' -Arguments 'int', 'ip', 'reset' -Quiet | Out-Null
+        Invoke-Exe -File 'ipconfig.exe' -Arguments '/flushdns' -Quiet -TimeoutSeconds 120 | Out-Null
+        Invoke-Exe -File 'netsh.exe' -Arguments 'winsock', 'reset' -Quiet -TimeoutSeconds 120 | Out-Null
+        Invoke-Exe -File 'netsh.exe' -Arguments 'int', 'ip', 'reset' -Quiet -TimeoutSeconds 120 | Out-Null
         New-FixResult -Success $true -Message 'DNS キャッシュをクリアし、Winsock と TCP/IP をリセットしました。再起動してください' -RebootRequired $true
     }
 }
@@ -184,7 +184,7 @@ Register-Check @{
             $items += '{0}: {1}' -f $i.Adapter.InterfaceDescription, $state
             if ($i.PowerManagementEnabled) { $bad += $i }
         }
-        $pc = Invoke-Exe -File 'powercfg.exe' -Arguments '/query', 'SCHEME_CURRENT', '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1', '12bbebe6-58d6-4636-95bb-3217ef867c1a' -Quiet
+        $pc = Invoke-Exe -File 'powercfg.exe' -Arguments '/query', 'SCHEME_CURRENT', '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1', '12bbebe6-58d6-4636-95bb-3217ef867c1a' -Quiet -TimeoutSeconds 120
         $acLine = $pc.Lines | Where-Object { $_ -match 'AC' -and $_ -match '0x[0-9a-fA-F]+' } | Select-Object -First 1
         $acIdx = -1
         if ($acLine -and $acLine -match '0x([0-9a-fA-F]+)') { $acIdx = [Convert]::ToInt32($Matches[1], 16) }
@@ -204,8 +204,8 @@ Register-Check @{
             Set-RegValue -Path $k -Name 'PnPCapabilities' -Value 24
             $n++
         }
-        Invoke-Exe -File 'powercfg.exe' -Arguments '/setacvalueindex', 'SCHEME_CURRENT', '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1', '12bbebe6-58d6-4636-95bb-3217ef867c1a', '0' -Quiet | Out-Null
-        Invoke-Exe -File 'powercfg.exe' -Arguments '/setactive', 'SCHEME_CURRENT' -Quiet | Out-Null
+        Invoke-Exe -File 'powercfg.exe' -Arguments '/setacvalueindex', 'SCHEME_CURRENT', '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1', '12bbebe6-58d6-4636-95bb-3217ef867c1a', '0' -Quiet -TimeoutSeconds 120 | Out-Null
+        Invoke-Exe -File 'powercfg.exe' -Arguments '/setactive', 'SCHEME_CURRENT' -Quiet -TimeoutSeconds 120 | Out-Null
         foreach ($name in $ScanResult.Data.Names) {
             try { Restart-NetAdapter -Name $name -Confirm:$false -ErrorAction Stop; Write-Log "  アダプター再起動: $name" } catch { Write-Log "  アダプター再起動に失敗 ($name): 再起動後に反映されます" 'WARN' }
         }
@@ -227,7 +227,7 @@ Register-Check @{
         $items = @()
         if ($enable -eq 1) { $items += "手動プロキシ: $server" }
         if ($pac) { $items += "自動構成スクリプト: $pac" }
-        $wh = Invoke-Exe -File 'netsh.exe' -Arguments 'winhttp', 'show', 'proxy' -Quiet
+        $wh = Invoke-Exe -File 'netsh.exe' -Arguments 'winhttp', 'show', 'proxy' -Quiet -TimeoutSeconds 120
         $whLine = $wh.Lines | Where-Object { $_ -match 'Proxy Server|プロキシ サーバー' } | Select-Object -First 1
         if ($whLine) { $items += "WinHTTP: $whLine" }
         if ($items.Count -eq 0) { return (New-ScanResult -Status ok -Summary 'プロキシは設定されていません') }
@@ -239,7 +239,7 @@ Register-Check @{
         Backup-RegistryKey -PSPath $k -Tag 'internet-settings' | Out-Null
         Set-RegValue -Path $k -Name 'ProxyEnable' -Value 0
         Remove-ItemProperty -LiteralPath $k -Name 'AutoConfigURL' -ErrorAction SilentlyContinue
-        if (Test-IsAdmin) { Invoke-Exe -File 'netsh.exe' -Arguments 'winhttp', 'reset', 'proxy' -Quiet | Out-Null }
+        if (Test-IsAdmin) { Invoke-Exe -File 'netsh.exe' -Arguments 'winhttp', 'reset', 'proxy' -Quiet -TimeoutSeconds 120 | Out-Null }
         New-FixResult -Success $true -Message 'プロキシ設定を解除しました'
     }
 }

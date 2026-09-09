@@ -221,7 +221,7 @@ function Update-GroupHeader {
     if (-not $G.GroupHeaders.ContainsKey($Group)) { return }
     $tb = $G.GroupHeaders[$Group]
     $scanned = $false
-    foreach ($c in (Get-Checks -Group $Group -IncludeLong)) { if ($G.Results.ContainsKey($c.Id)) { $scanned = $true } }
+    foreach ($c in (Get-Checks -Group $Group -IncludeLong -IncludeManual)) { if ($G.Results.ContainsKey($c.Id)) { $scanned = $true } }
     $fix = Get-FixQueuedCount -Group $Group
     $att = Get-AttentionCount -Group $Group
     if (-not $scanned) { $tb.Text = '未点検'; $tb.Foreground = New-Brush $G.Colors.none; return }
@@ -305,7 +305,8 @@ function New-CheckRow {
         $stack.Children.Add($notes) | Out-Null
     }
     $tagMsg = $null
-    if ($Check.LongFix) { $tagMsg = '修復に時間がかかり途中で止められないため、既定ではチェックを外しています' }
+    if ($Check.Manual) { $tagMsg = '所要時間が読めないため一括点検には含めません。この行の「詳細検査」から実行してください' }
+    elseif ($Check.LongFix) { $tagMsg = '修復に時間がかかり途中で止められないため、既定ではチェックを外しています' }
     elseif ($Check.Risk -ne 'low') { $tagMsg = '設定変更や再起動を伴うため、既定ではチェックを外しています' }
     if ($tagMsg) {
         $tagText = New-Text -Text $tagMsg -Size 11 -Color $G.Colors.recommend
@@ -320,7 +321,7 @@ function New-CheckRow {
 
     $btnPanel = New-Object System.Windows.Controls.StackPanel
     $btnPanel.Orientation = 'Horizontal'; $btnPanel.VerticalAlignment = 'Top'
-    if ($Check.Long) {
+    if ($Check.Long -or $Check.Manual) {
         # 時間のかかる項目は通常の点検では走らせない。行から個別に「詳細検査」できる
         $scanBtn = New-Object System.Windows.Controls.Button
         $scanBtn.Content = '詳細検査'; $scanBtn.Style = Get-GuiStyle 'LinkButton'; $scanBtn.Tag = $Check.Id
@@ -350,13 +351,13 @@ function Render-Category {
     if (Test-CategoryScanned $G.Category) {
         $groupKeys = Sort-ByRank -Items $groupKeys -RankOf {
             param($k)
-            $ranks = @(Get-Checks -Group $k -IncludeLong | ForEach-Object { Get-CheckRank -Check $_ })
+            $ranks = @(Get-Checks -Group $k -IncludeLong -IncludeManual | ForEach-Object { Get-CheckRank -Check $_ })
             if ($ranks.Count) { ($ranks | Measure-Object -Minimum).Minimum } else { 7 }
         }
     }
     foreach ($gk in $groupKeys) {
         $grp = $Global:PCTuneUp.Groups[$gk]
-        $checks = @(Get-Checks -Group $gk -IncludeLong)
+        $checks = @(Get-Checks -Group $gk -IncludeLong -IncludeManual)
         if ($checks.Count -eq 0) { continue }
         if (Test-CategoryScanned $G.Category) {
             $checks = Sort-ByRank -Items $checks -RankOf { param($c) Get-CheckRank -Check $c }
@@ -427,7 +428,6 @@ function Set-Busy {
     $ui.ScanButton.IsEnabled = -not $Busy
     $ui.ReportButton.IsEnabled = (-not $Busy) -and ($G.Results.Count -gt 0)
     $ui.GroupsPanel.IsEnabled = -not $Busy
-    $ui.FullScanBox.IsEnabled = -not $Busy
     $ui.CancelButton.Visibility = $(if ($Busy) { 'Visible' } else { 'Collapsed' })
     $ui.Progress.Visibility = $(if ($Busy) { 'Visible' } else { 'Hidden' })
     $ui.Progress.IsIndeterminate = $Busy
@@ -613,9 +613,8 @@ function Stop-Work {
 }
 
 function Start-Scan {
-    $G = $Global:PCTuneUpGui
-    $full = [bool]$G.UI.FullScanBox.IsChecked
-    $ids = @(Get-Checks -IncludeLong:$full | ForEach-Object { $_.Id })
+    # 所要時間の読めない項目 (Manual) だけは除く。それらは各行の「詳細検査」から実行する
+    $ids = @(Get-Checks -IncludeLong | ForEach-Object { $_.Id })
     Start-Work -Mode scan -Ids $ids
 }
 

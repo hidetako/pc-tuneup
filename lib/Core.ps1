@@ -91,6 +91,7 @@ function Write-Log {
 #      Risk          = 'low'|'medium'    任意 (medium は既定で未選択)
 #      RequiresAdmin = $true             任意
 #      Long          = $true             任意。時間のかかる検査 (詳細スキャン時のみ)
+#      Manual        = $true             任意。所要時間が読めない検査。一括点検には含めず、行から個別にだけ実行する
 #      LongFix       = $true             任意。修復に数分以上かかる。既定では選択せず、確認画面で所要時間を明示する
 #      Notes         = '補足'            任意
 #  }
@@ -123,6 +124,7 @@ function Register-Check {
         Risk          = $risk
         RequiresAdmin = [bool]$d['RequiresAdmin']
         Long          = [bool]$d['Long']
+        Manual        = [bool]$d['Manual']
         LongFix       = [bool]$d['LongFix']
         Notes         = [string]$d['Notes']
     }
@@ -150,11 +152,12 @@ function Get-Check {
 }
 
 function Get-Checks {
-    param([string]$Category, [string]$Group, [switch]$IncludeLong)
+    param([string]$Category, [string]$Group, [switch]$IncludeLong, [switch]$IncludeManual)
     foreach ($c in $Global:PCTuneUp.Checks.Values) {
         if ($Category -and $c.Category -ne $Category) { continue }
         if ($Group -and $c.Group -ne $Group) { continue }
         if ($c.Long -and -not $IncludeLong) { continue }
+        if ($c.Manual -and -not $IncludeManual) { continue }
         $c
     }
 }
@@ -309,6 +312,28 @@ function Test-IsAdmin {
     (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-FileTailLines {
+    <#
+      巨大なログの末尾だけを読む。
+      Get-Content -Tail は数百 MB のファイルで極端に遅くなるため (DISM 実行後の CBS.log がこれに当たる)、
+      末尾の指定バイト数だけをストリームで読む。書き込み中のファイルも開けるよう共有を許可する。
+    #>
+    param([Parameter(Mandatory)][string]$Path, [int]$MaxBytes = 4MB)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $len = $fs.Length
+        if ($len -eq 0) { return @() }
+        $take = [int][Math]::Min([long]$MaxBytes, $len)
+        $null = $fs.Seek($len - $take, [System.IO.SeekOrigin]::Begin)
+        $buf = New-Object byte[] $take
+        $read = $fs.Read($buf, 0, $take)
+    } finally { $fs.Dispose() }
+    $lines = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read) -split "`r?`n"
+    # 途中から読んだ場合、先頭の 1 行は切れているので捨てる
+    if ($take -lt $len -and $lines.Count -gt 1) { $lines = $lines[1..($lines.Count - 1)] }
+    return $lines
+}
+
 function Format-Bytes {
     param([double]$Bytes)
     if ($Bytes -ge 1TB) { return ('{0:N2} TB' -f ($Bytes / 1TB)) }
@@ -353,33 +378,66 @@ function Start-Tool {
 }
 
 function Invoke-Exe {
-    # ネイティブコマンドを実行し、出力行を返す (必要ならログにも流す)
+    <#
+      ネイティブコマンドを実行し、出力行を返す。
+      必ずタイムアウトを設ける: DISM のようなサービシング系コマンドは、再起動待ちなどの状況で
+      いつまでも戻ってこないことがあり、そのまま待つと点検全体が止まってしまう。
+    #>
     param(
         [Parameter(Mandatory)][string]$File,
         [string[]]$Arguments = @(),
         [switch]$Unicode,     # sfc.exe など UTF-16 で出力するコマンド用
-        [switch]$Quiet
+        [switch]$Quiet,
+        [int]$TimeoutSeconds = 900
     )
-    $prev = $null
-    try { $prev = [Console]::OutputEncoding } catch { }
+    if ($Unicode) { $enc = [System.Text.Encoding]::Unicode }
+    elseif ($Global:PCTuneUp.IsWindows) {
+        try { $enc = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
+        catch { $enc = [System.Text.Encoding]::UTF8 }
+    } else { $enc = [System.Text.Encoding]::UTF8 }
+
+    $argLine = (@($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { [string]$_ }
+    }) -join ' ')
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $File
+    $psi.Arguments = $argLine
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = $enc
+    $psi.StandardErrorEncoding = $enc
+
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+    $timedOut = $false
     try {
-        # sfc.exe は UTF-16、それ以外のコンソールツール (DISM, netsh, fsutil, ipconfig) は
-        # OEM コードページ (日本語 Windows では CP932) で出力する。呼び出し側のコンソール設定に
-        # 左右されないよう、ここで明示的に合わせる。
-        $enc = $null
-        if ($Unicode) { $enc = [System.Text.Encoding]::Unicode }
-        else {
-            try { $enc = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { }
+        [void]$p.Start()
+        $outTask = $p.StandardOutput.ReadToEndAsync()
+        $errTask = $p.StandardError.ReadToEndAsync()
+        if ($p.WaitForExit($TimeoutSeconds * 1000)) {
+            $p.WaitForExit()          # 非同期の読み取りを最後まで流し切る
+            $code = $p.ExitCode
+        } else {
+            $timedOut = $true
+            Write-Log ("  {0} が {1} 秒を超えたため打ち切ります" -f (Split-Path $File -Leaf), $TimeoutSeconds) 'WARN'
+            try { $p.Kill() } catch { }
+            try { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null } catch { }
+            try { $p.WaitForExit(10000) | Out-Null } catch { }
+            $code = -1
         }
-        if ($enc) { try { [Console]::OutputEncoding = $enc } catch { } }
-        $lines = @(& $File @Arguments 2>&1 | ForEach-Object { [string]$_ })
-        $code = $LASTEXITCODE
+        $raw = ''
+        try { $raw = [string]$outTask.Result + "`n" + [string]$errTask.Result } catch { }
     } finally {
-        if ($prev) { try { [Console]::OutputEncoding = $prev } catch { } }
+        try { $p.Dispose() } catch { }
     }
-    $clean = @($lines | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ -and $_ -notmatch '^\d+(\.\d+)?%' })
-    if (-not $Quiet) { foreach ($l in $clean) { Write-Log ('  ' + $l) } }
-    [pscustomobject]@{ ExitCode = $code; Lines = $clean }
+
+    $lines = @($raw -split "`r?`n" | ForEach-Object { ($_ -replace '[\x00\x08\r]', '').Trim() } |
+        Where-Object { $_ -and $_ -notmatch '^\[?[=\s]*\d+(\.\d+)?%' })
+    if (-not $Quiet) { foreach ($l in $lines) { Write-Log ('  ' + $l) } }
+    [pscustomobject]@{ ExitCode = $code; Lines = $lines; TimedOut = $timedOut }
 }
 
 # ---------------------------------------------------------------------

@@ -68,7 +68,7 @@ Register-Check @{
     Id = 'defender.quickscan'; Group = 'defender'
     Name = 'ウイルス スキャン'
     Description = '直近 7 日以内にクイック スキャンが実行されているか'
-    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = 'クイック スキャン実行'
+    RequiresAdmin = $true; LongFix = $true; FixLabel = 'クイック スキャン実行'
     FixConfirm = 'Defender のクイック スキャンを実行します (5〜15 分。開始すると途中で止められません)'
     Notes = 'クイック スキャンは 5〜15 分かかります。'
     Scan = {

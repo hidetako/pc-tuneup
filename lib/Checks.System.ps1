@@ -31,13 +31,14 @@ Register-Check @{
     Id = 'system.sfc'; Group = 'system'
     Name = 'システムファイルの整合性 (SFC)'
     Description = '保護されたシステムファイルの改変・破損を検査して修復'
-    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = '検査と修復 (sfc /scannow)'
+    RequiresAdmin = $true; LongFix = $true; FixLabel = '検査と修復 (sfc /scannow)'
     FixConfirm = 'sfc /scannow でシステムファイルを検査・修復します (5〜15 分。開始すると途中で止められません)'
     Notes = 'sfc /scannow は 5〜15 分かかります。'
     Scan = {
         $log = Join-EnvPath $env:SystemRoot 'Logs\CBS\CBS.log'
         if (-not $log -or -not (Test-Path -LiteralPath $log)) { return (New-ScanResult -Status recommend -Count 1 -Summary '実行履歴がありません。一度実行することをお勧めします') }
-        $tail = Get-Content -LiteralPath $log -Tail 60000 -ErrorAction Stop
+        # CBS.log は DISM の修復後に数百 MB になることがあるため、末尾だけを読む
+        $tail = @(Get-FileTailLines -Path $log -MaxBytes 8MB)
         $lastVerify = $tail | Where-Object { $_ -match '\[SR\] Verify complete' } | Select-Object -Last 1
         if (-not $lastVerify) { return (New-ScanResult -Status recommend -Count 1 -Summary '最近の実行履歴がありません。一度実行することをお勧めします') }
         $date = $null
@@ -57,7 +58,7 @@ Register-Check @{
     Fix = {
         param($ScanResult)
         Write-Log '  sfc /scannow を実行中 (5〜15 分)…'
-        $r = Invoke-Exe -File 'sfc.exe' -Arguments '/scannow' -Unicode -Quiet
+        $r = Invoke-Exe -File 'sfc.exe' -Arguments '/scannow' -Unicode -Quiet -TimeoutSeconds 3600
         $text = $r.Lines -join ' '
         foreach ($l in ($r.Lines | Select-Object -Last 4)) { Write-Log "  $l" }
         if ($text -match 'did not find any integrity violations|整合性違反を検出しませんでした') {
@@ -78,9 +79,9 @@ Register-Check @{
     Id = 'system.disk-errors'; Group = 'system'
     Name = 'ディスクのファイルシステム エラー'
     Description = '各ドライブをオンラインで検査 (chkdsk /scan 相当)'
-    RequiresAdmin = $true; Long = $true; LongFix = $true; FixLabel = '修復を予約'
+    RequiresAdmin = $true; Long = $true; Manual = $true; LongFix = $true; FixLabel = '修復を予約'
     FixConfirm = 'ディスクの修復を行います (システムドライブは次回の再起動時。データドライブはその場で数分かかります)'
-    Notes = 'システムドライブの修復は次回の再起動時に実行されます。'
+    Notes = '検査 (chkdsk /scan 相当) は容量やファイル数によって数分〜数時間かかり、所要時間が読めません。そのため一括点検には含めず、この行の「詳細検査」から実行してください。システムドライブの修復は次回の再起動時に実行されます。'
     Scan = {
         $vols = @(Get-Volume -ErrorAction Stop | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'NTFS' -and $_.DriveType -eq 'Fixed' })
         $items = @(); $bad = @()

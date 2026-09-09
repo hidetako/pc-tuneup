@@ -192,8 +192,6 @@
       <Button Name="ScanButton" Grid.Column="0" Style="{StaticResource PrimaryButton}" Content="点検" MinWidth="120"/>
       <Button Name="FixButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="修復" MinWidth="140" Margin="8,0,0,0" IsEnabled="False"/>
       <Button Name="CancelButton" Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="中止" Margin="8,0,0,0" Visibility="Collapsed"/>
-      <CheckBox Name="FullScanBox" Grid.Column="3" Content="時間のかかる項目も点検する (DISM・ディスク検査・更新の確認)"
-                VerticalAlignment="Center" Margin="16,0,0,0" Foreground="{StaticResource TextMuted}"/>
       <Button Name="ReportButton" Grid.Column="4" Style="{StaticResource LinkButton}" Content="レポートを保存" VerticalAlignment="Center" IsEnabled="False"/>
     </Grid>
 

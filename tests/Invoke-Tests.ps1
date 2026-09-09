@@ -176,6 +176,46 @@ foreach ($lid in 'system.component-health', 'system.sfc', 'system.disk-errors', 
     Assert ([bool]$lc.FixConfirm) "$lid は所要時間を確認画面に出す"
 }
 Assert (-not (Get-Check 'junk.user-temp').LongFix) '一時ファイルの削除は LongFix ではない'
+
+Write-Host '[所要時間が読めない検査 / 巨大ログの読み取り]'
+Assert ((Get-Check 'system.disk-errors').Manual) 'ディスク検査は Manual (一括点検に含めない)'
+Assert ((Get-Check 'junk.component-store').Manual) 'コンポーネントストアの解析も Manual'
+Assert (-not (Get-Check 'system.sfc').Long) 'SFC の点検はログを読むだけなので通常点検に含める'
+Assert (-not (Get-Check 'defender.quickscan').Long) 'Defender スキャンの点検は状態を読むだけ'
+
+# 外部コマンドのタイムアウト (応答が返らないコマンドで点検全体が止まらないこと)
+$hostExe = (Get-Process -Id $PID).Path
+$okRun = Invoke-Exe -File $hostExe -Arguments '-NoProfile', '-Command', 'Write-Output hello' -Quiet -TimeoutSeconds 60
+Assert (-not $okRun.TimedOut -and $okRun.ExitCode -eq 0) '正常終了したコマンドは TimedOut にならない'
+Assert (($okRun.Lines -join '') -match 'hello') '標準出力を受け取れる'
+$t0 = Get-Date
+$slowRun = Invoke-Exe -File $hostExe -Arguments '-NoProfile', '-Command', 'Start-Sleep -Seconds 120' -Quiet -TimeoutSeconds 3
+$waited = ((Get-Date) - $t0).TotalSeconds
+Assert ($slowRun.TimedOut) '戻らないコマンドはタイムアウトする'
+Assert ($slowRun.ExitCode -eq -1) 'タイムアウトは ExitCode -1'
+Assert ($waited -lt 30) "指定秒数付近で打ち切る ($([int]$waited) 秒)"
+$quoted = Invoke-Exe -File $hostExe -Arguments '-NoProfile', '-Command', 'Write-Output "a b"' -Quiet -TimeoutSeconds 60
+Assert (($quoted.Lines -join '') -match 'a b') '空白を含む引数を正しく渡す'
+Assert (@(Get-Checks -IncludeLong | Where-Object { $_.Id -eq 'system.disk-errors' }).Count -eq 0) '詳細スキャンでも Manual は含めない'
+Assert (@(Get-Checks -IncludeLong -IncludeManual | Where-Object { $_.Id -eq 'system.disk-errors' }).Count -eq 1) '-IncludeManual なら一覧に出る'
+Assert ((@(Get-Checks -IncludeLong -IncludeManual)).Count -gt (@(Get-Checks -IncludeLong)).Count) '行の表示件数は一括点検より多い'
+
+# 巨大ログの末尾読み取り
+$logTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('pctuneup-log-' + [guid]::NewGuid().ToString('N') + '.log')
+$sw = New-Object System.IO.StreamWriter($logTmp, $false, (New-Object System.Text.UTF8Encoding $false))
+for ($i = 1; $i -le 20000; $i++) { $sw.WriteLine("line $i " + ('x' * 200)) }
+$sw.Close()
+$small = @(Get-FileTailLines -Path $logTmp -MaxBytes 4MB)
+Assert ($small.Count -ge 19000) "ファイル全体が読める ($($small.Count))"
+Assert ($small[$small.Count - 2] -match '^line 20000 ') '末尾の行が含まれる'
+$clipped = @(Get-FileTailLines -Path $logTmp -MaxBytes 10KB)
+Assert ($clipped.Count -lt 200) "上限を超えた分は読まない ($($clipped.Count))"
+Assert ($clipped[$clipped.Count - 2] -match '^line 20000 ') '切り詰めても末尾の行は含まれる'
+Assert ($clipped[0] -match '^line \d+ ') '切れた先頭行は捨てられる'
+# 書き込み中のファイルでも開ける
+$open = [System.IO.File]::Open($logTmp, 'Open', 'Write', 'ReadWrite')
+try { Assert ((@(Get-FileTailLines -Path $logTmp -MaxBytes 10KB)).Count -gt 0) '書き込み中のログも読める' } finally { $open.Dispose() }
+Remove-Item -LiteralPath $logTmp -Force -ErrorAction SilentlyContinue
 # Gui.ps1: ウィンドウを閉じるときに UI スレッドを止めない (Stop() は使わない)
 $guiSrc = Get-Content -LiteralPath (Join-Path $root 'gui\Gui.ps1') -Raw -Encoding UTF8
 $closing = [regex]::Match($guiSrc, 'Add_Closing\(\{.*?\}\)', 'Singleline').Value
@@ -347,7 +387,7 @@ Assert (@($logLines | Where-Object { $_ -match 'スキャン' }).Count -ge 2) "�
 $ps.Dispose(); $rs.Close(); $rs.Dispose()
 $xamlDoc = [xml](Get-Content -LiteralPath $xaml -Raw -Encoding UTF8)
 $names = @($xamlDoc.SelectNodes('//*[@Name]') | ForEach-Object { $_.Name })
-foreach ($n in 'ScanButton', 'FixButton', 'CancelButton', 'GroupsPanel', 'LogBox', 'StatusText', 'FullScanBox', 'CatTuneupBadgeText', 'CatSecurityGlyph') {
+foreach ($n in 'ScanButton', 'FixButton', 'CancelButton', 'GroupsPanel', 'LogBox', 'StatusText', 'CatTuneupBadgeText', 'CatSecurityGlyph') {
     Assert ($names -contains $n) "XAML に $n がある"
 }
 foreach ($n in $names) {
