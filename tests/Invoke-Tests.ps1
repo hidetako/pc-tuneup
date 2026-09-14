@@ -49,7 +49,7 @@ foreach ($g in $Global:PCTuneUp.Groups.Keys) {
 }
 Assert ((@(Get-Checks)).Count -lt $checks.Count) 'Get-Checks は既定で Long を除外する'
 Assert ((Get-Check 'junk.user-temp').FixLabel -eq '削除') 'New-JunkCheck の FixLabel'
-foreach ($fn in 'Get-RunKeyPaths', 'Get-StartupItems', 'Get-BrowserCacheTargets', 'Get-DefenderStatus') {
+foreach ($fn in 'Get-RunKeyPaths', 'Get-StartupItems', 'Get-BrowserCacheTargets', 'Get-DefenderStatus', 'Get-BitLockerLockedDrives') {
     Assert ([bool](Get-Command $fn -ErrorAction SilentlyContinue)) "ヘルパー関数 $fn が Import-Checks 後も見える"
 }
 
@@ -102,6 +102,11 @@ $sr = New-ScanResult -Status issue -Count 3 -Summary 's'
 Assert ($sr.Status -eq 'issue' -and $sr.Count -eq 3 -and $sr.Items.Count -eq 0) 'New-ScanResult'
 $sel = Select-ResultObject -Output @('stray text', $null, (New-ScanResult -Status ok -Summary 'a'), (New-ScanResult -Status issue -Summary 'b')) -Property Status
 Assert ($sel.Summary -eq 'b') 'Select-ResultObject は最後の結果を返す'
+
+# BitLocker でロック中のドライブの判定は、判定できない環境でも例外を出さず空配列を返す (ディスク検査を止めない)
+$lockedDrives = @(Get-BitLockerLockedDrives)
+Assert ($lockedDrives -is [array]) 'Get-BitLockerLockedDrives は配列を返す'
+Assert (@($lockedDrives | Where-Object { $_ -notmatch '^[A-Z]$' }).Count -eq 0) 'Get-BitLockerLockedDrives はドライブ文字だけを返す'
 
 # ---- 4. ファイル削除ロジック -------------------------------------------
 Write-Host '[不要ファイルの列挙と削除]'

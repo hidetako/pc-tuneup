@@ -75,6 +75,40 @@ Register-Check @{
     }
 }
 
+function Global:Get-BitLockerLockedDrives {
+    <#
+      BitLocker でロックされたまま (ロック解除前) のドライブ文字を返す (例: 'D', 'E')。
+      ロック中のボリュームは中身が読めないので、chkdsk 相当の検査や空き容量の取得が失敗する。
+      これを「エラー」と誤認しないよう、検査対象から外して「未検査」として表示するために使う。
+      BitLocker モジュールが無い Home エディションでは WMI (Win32_EncryptableVolume) を使う。
+      どちらも使えなければ空配列を返す (判定できないだけで、検査そのものは続行する)。
+    #>
+    $locked = @()
+    if (-not $Global:PCTuneUp.IsWindows) { return , $locked }
+    try {
+        if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+            foreach ($bv in @(Get-BitLockerVolume -ErrorAction Stop)) {
+                if ([string]$bv.LockStatus -eq 'Locked' -and $bv.MountPoint -match '^([A-Za-z]):') {
+                    $locked += $Matches[1].ToUpperInvariant()
+                }
+            }
+            return , @($locked | Sort-Object -Unique)
+        }
+    } catch { Write-Log "  Get-BitLockerVolume: $($_.Exception.Message)" 'WARN' }
+    try {
+        $vols = @(Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -ErrorAction Stop)
+        foreach ($ev in $vols) {
+            if ($ev.DriveLetter -notmatch '^([A-Za-z]):') { continue }
+            $letter = $Matches[1].ToUpperInvariant()
+            $st = $null
+            try { $st = Invoke-CimMethod -InputObject $ev -MethodName GetLockStatus -ErrorAction Stop } catch { }
+            # GetLockStatus: 0 = Unlocked, 1 = Locked。取れないときは ProtectionStatus 2 (Unknown = ロック中の可能性) で代用
+            if (($st -and [int]$st.LockStatus -eq 1) -or (-not $st -and [int]$ev.ProtectionStatus -eq 2)) { $locked += $letter }
+        }
+    } catch { Write-Log "  Win32_EncryptableVolume: $($_.Exception.Message)" 'WARN' }
+    return , @($locked | Sort-Object -Unique)
+}
+
 Register-Check @{
     Id = 'system.disk-errors'; Group = 'system'
     Name = 'ディスクのファイルシステム エラー'
@@ -84,14 +118,34 @@ Register-Check @{
     Notes = '検査 (chkdsk /scan 相当) は容量やファイル数によって数分〜数時間かかり、所要時間が読めません。そのため一括点検には含めず、この行の「詳細検査」から実行してください。システムドライブの修復は次回の再起動時に実行されます。'
     Scan = {
         $vols = @(Get-Volume -ErrorAction Stop | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'NTFS' -and $_.DriveType -eq 'Fixed' })
-        $items = @(); $bad = @()
+        $locked = @(Get-BitLockerLockedDrives)
+        $items = @(); $bad = @(); $unscanned = @()
         foreach ($v in $vols) {
-            $res = [string](Repair-Volume -DriveLetter $v.DriveLetter -Scan -ErrorAction Stop)
-            $items += ('{0}: {1}' -f $v.DriveLetter, $res)
-            if ($res -ne 'NoErrorsFound') { $bad += [string]$v.DriveLetter }
+            $letter = ([string]$v.DriveLetter).ToUpperInvariant()
+            if ($letter -in $locked) {
+                # ロック中の BitLocker ボリュームは中身が読めず chkdsk が失敗する。ディスクの異常ではないので未検査扱い
+                $items += "${letter}: BitLocker でロック中のため未検査 (ロック解除後に「詳細検査」を再実行してください)"
+                $unscanned += $letter
+                continue
+            }
+            try {
+                $res = [string](Repair-Volume -DriveLetter $letter -Scan -ErrorAction Stop)
+            } catch {
+                $msg = $_.Exception.Message
+                if ($msg -match 'BitLocker') { $msg = 'BitLocker でロック中のため未検査 (ロック解除後に「詳細検査」を再実行してください)' }
+                else { $msg = "検査できませんでした ($msg)" }
+                $items += "${letter}: $msg"
+                $unscanned += $letter
+                continue
+            }
+            $items += ('{0}: {1}' -f $letter, $res)
+            # Repair-Volume は環境により列挙名 (NoErrorsFound) でも数値 (0) でも返る
+            if ($res -notin 'NoErrorsFound', '0') { $bad += $letter }
         }
-        if ($bad.Count -gt 0) { New-ScanResult -Status issue -Count $bad.Count -Summary ('エラーが見つかりました: ' + ($bad -join ', ')) -Items $items -Data @{ Drives = $bad } }
-        else { New-ScanResult -Status ok -Summary 'エラーは見つかりませんでした' -Items $items }
+        $note = if ($unscanned.Count -gt 0) { ' (未検査: ' + (($unscanned | ForEach-Object { "${_}:" }) -join ', ') + ')' } else { '' }
+        if ($bad.Count -gt 0) { New-ScanResult -Status issue -Count $bad.Count -Summary ('エラーが見つかりました: ' + ($bad -join ', ') + $note) -Items $items -Data @{ Drives = $bad } }
+        elseif ($vols.Count -gt 0 -and $unscanned.Count -eq $vols.Count) { New-ScanResult -Status skipped -Summary ('検査できるドライブがありませんでした' + $note) -Items $items }
+        else { New-ScanResult -Status ok -Summary ('エラーは見つかりませんでした' + $note) -Items $items }
     }
     Fix = {
         param($ScanResult)

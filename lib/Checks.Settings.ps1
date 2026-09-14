@@ -78,9 +78,14 @@ Register-Check @{
     ActionLabel = 'ストレージ設定を開く'
     Scan = {
         $disks = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop)
+        $locked = @(Get-BitLockerLockedDrives)
         $items = @(); $low = 0
         foreach ($d in $disks) {
-            if (-not $d.Size) { continue }
+            if (-not $d.Size) {
+                # BitLocker でロック中のボリュームは容量が取れない。異常ではないので理由だけ示す
+                if (([string]$d.DeviceID).TrimEnd(':').ToUpperInvariant() -in $locked) { $items += '{0}  BitLocker でロック中のため未確認' -f $d.DeviceID }
+                continue
+            }
             $pct = [math]::Round($d.FreeSpace * 100 / $d.Size, 1)
             $items += '{0}  空き {1} / {2} ({3}%)' -f $d.DeviceID, (Format-Bytes $d.FreeSpace), (Format-Bytes $d.Size), $pct
             if ($pct -lt 10 -or $d.FreeSpace -lt 10GB) { $low++ }
