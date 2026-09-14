@@ -315,6 +315,7 @@ $p = Export-Report -Results $results -FixResults @{ 'junk.__test' = $fr } -Path 
 $json = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
 Assert ($json.Tool -eq 'PC TuneUp' -and $json.Checks.Count -eq 2) 'Export-Report: JSON に 2 件'
 Assert ($json.Summary.Errors -eq 1) 'Export-Report: エラー件数'
+Assert ($json.Summary.JunkBytes -eq 3000) 'Export-Report: 不要ファイルの合計サイズ (PowerShell 5.1 でも集計できる)'
 Assert (($json.Checks | Where-Object { $_.Id -eq 'junk.__test' }).Fix.Success -eq $true) 'Export-Report: 修復結果を含む'
 
 # ---- 6b. 色の定義 -----------------------------------------------------

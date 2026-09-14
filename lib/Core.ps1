@@ -293,7 +293,8 @@ function Export-Report {
             Issues    = @($items | Where-Object { $_.Status -eq 'issue' }).Count
             Recommend = @($items | Where-Object { $_.Status -eq 'recommend' }).Count
             Errors    = @($items | Where-Object { $_.Status -eq 'error' }).Count
-            JunkBytes = ($items | Where-Object { $_.Group -in 'junk', 'browser' } | Measure-Object -Property Bytes -Sum).Sum
+            # $items は [ordered] ハッシュテーブルなので、Windows PowerShell 5.1 では Measure-Object -Property でキーを参照できない。値を取り出してから合計する
+            JunkBytes = [long](($items | Where-Object { $_.Group -in 'junk', 'browser' } | ForEach-Object { [long]$_.Bytes } | Measure-Object -Sum).Sum)
         }
         Checks = @($items)
     }
