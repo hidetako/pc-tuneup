@@ -49,7 +49,7 @@ foreach ($g in $Global:PCTuneUp.Groups.Keys) {
 }
 Assert ((@(Get-Checks)).Count -lt $checks.Count) 'Get-Checks は既定で Long を除外する'
 Assert ((Get-Check 'junk.user-temp').FixLabel -eq '削除') 'New-JunkCheck の FixLabel'
-foreach ($fn in 'Get-RunKeyPaths', 'Get-StartupItems', 'Get-BrowserCacheTargets', 'Get-DefenderStatus') {
+foreach ($fn in 'Get-RunKeyPaths', 'Get-StartupItems', 'Get-BrowserCacheTargets', 'Get-DefenderStatus', 'Get-BitLockerLockedDrives') {
     Assert ([bool](Get-Command $fn -ErrorAction SilentlyContinue)) "ヘルパー関数 $fn が Import-Checks 後も見える"
 }
 
@@ -102,6 +102,12 @@ $sr = New-ScanResult -Status issue -Count 3 -Summary 's'
 Assert ($sr.Status -eq 'issue' -and $sr.Count -eq 3 -and $sr.Items.Count -eq 0) 'New-ScanResult'
 $sel = Select-ResultObject -Output @('stray text', $null, (New-ScanResult -Status ok -Summary 'a'), (New-ScanResult -Status issue -Summary 'b')) -Property Status
 Assert ($sel.Summary -eq 'b') 'Select-ResultObject は最後の結果を返す'
+
+# BitLocker でロック中のドライブの判定は、判定できない環境でも例外を出さず空配列を返す (ディスク検査を止めない)
+$lockedDrives = @(Get-BitLockerLockedDrives)
+Assert ($lockedDrives -is [array]) 'Get-BitLockerLockedDrives は配列を返す'
+Assert (@($lockedDrives | Where-Object { $_ -notmatch '^[A-Z]$' }).Count -eq 0) 'Get-BitLockerLockedDrives はドライブ文字だけを返す'
+Assert (@($lockedDrives | Where-Object { $_ -is [array] }).Count -eq 0) 'Get-BitLockerLockedDrives は入れ子の配列を返さない (-in で判定できる)'
 
 # ---- 4. ファイル削除ロジック -------------------------------------------
 Write-Host '[不要ファイルの列挙と削除]'
@@ -310,6 +316,7 @@ $p = Export-Report -Results $results -FixResults @{ 'junk.__test' = $fr } -Path 
 $json = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
 Assert ($json.Tool -eq 'PC TuneUp' -and $json.Checks.Count -eq 2) 'Export-Report: JSON に 2 件'
 Assert ($json.Summary.Errors -eq 1) 'Export-Report: エラー件数'
+Assert ($json.Summary.JunkBytes -eq 3000) 'Export-Report: 不要ファイルの合計サイズ (PowerShell 5.1 でも集計できる)'
 Assert (($json.Checks | Where-Object { $_.Id -eq 'junk.__test' }).Fix.Success -eq $true) 'Export-Report: 修復結果を含む'
 
 # ---- 6b. 色の定義 -----------------------------------------------------
