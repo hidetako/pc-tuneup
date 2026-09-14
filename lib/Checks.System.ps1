@@ -83,8 +83,9 @@ function Global:Get-BitLockerLockedDrives {
       BitLocker モジュールが無い Home エディションでは WMI (Win32_EncryptableVolume) を使う。
       どちらも使えなければ空配列を返す (判定できないだけで、検査そのものは続行する)。
     #>
+    # 呼び出し側は @(...) で受けるので、ここでは配列をそのまま流す (単項カンマで包むと入れ子の配列になり -in が効かない)
     $locked = @()
-    if (-not $Global:PCTuneUp.IsWindows) { return , $locked }
+    if (-not $Global:PCTuneUp.IsWindows) { return $locked }
     try {
         if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
             foreach ($bv in @(Get-BitLockerVolume -ErrorAction Stop)) {
@@ -92,7 +93,7 @@ function Global:Get-BitLockerLockedDrives {
                     $locked += $Matches[1].ToUpperInvariant()
                 }
             }
-            return , @($locked | Sort-Object -Unique)
+            return @($locked | Sort-Object -Unique)
         }
     } catch { Write-Log "  Get-BitLockerVolume: $($_.Exception.Message)" 'WARN' }
     try {
@@ -106,7 +107,7 @@ function Global:Get-BitLockerLockedDrives {
             if (($st -and [int]$st.LockStatus -eq 1) -or (-not $st -and [int]$ev.ProtectionStatus -eq 2)) { $locked += $letter }
         }
     } catch { Write-Log "  Win32_EncryptableVolume: $($_.Exception.Message)" 'WARN' }
-    return , @($locked | Sort-Object -Unique)
+    return @($locked | Sort-Object -Unique)
 }
 
 Register-Check @{
@@ -119,7 +120,7 @@ Register-Check @{
     Scan = {
         $vols = @(Get-Volume -ErrorAction Stop | Where-Object { $_.DriveLetter -and $_.FileSystemType -eq 'NTFS' -and $_.DriveType -eq 'Fixed' })
         $locked = @(Get-BitLockerLockedDrives)
-        $items = @(); $bad = @(); $unscanned = @()
+        $items = @(); $bad = @(); $unscanned = @(); $failed = @()
         foreach ($v in $vols) {
             $letter = ([string]$v.DriveLetter).ToUpperInvariant()
             if ($letter -in $locked) {
@@ -132,10 +133,15 @@ Register-Check @{
                 $res = [string](Repair-Volume -DriveLetter $letter -Scan -ErrorAction Stop)
             } catch {
                 $msg = $_.Exception.Message
-                if ($msg -match 'BitLocker') { $msg = 'BitLocker でロック中のため未検査 (ロック解除後に「詳細検査」を再実行してください)' }
-                else { $msg = "検査できませんでした ($msg)" }
-                $items += "${letter}: $msg"
-                $unscanned += $letter
+                if ($msg -match 'BitLocker') {
+                    # ロック判定が使えない環境 (Home で WMI も不可など) では、ここで初めてロック中と分かる
+                    $items += "${letter}: BitLocker でロック中のため未検査 (ロック解除後に「詳細検査」を再実行してください)"
+                    $unscanned += $letter
+                } else {
+                    # それ以外の失敗 (I/O エラーやストレージ プロバイダーの異常) は隠さずエラーとして報告する
+                    $items += "${letter}: 検査に失敗しました ($msg)"
+                    $failed += $letter
+                }
                 continue
             }
             $items += ('{0}: {1}' -f $letter, $res)
@@ -144,6 +150,7 @@ Register-Check @{
         }
         $note = if ($unscanned.Count -gt 0) { ' (未検査: ' + (($unscanned | ForEach-Object { "${_}:" }) -join ', ') + ')' } else { '' }
         if ($bad.Count -gt 0) { New-ScanResult -Status issue -Count $bad.Count -Summary ('エラーが見つかりました: ' + ($bad -join ', ') + $note) -Items $items -Data @{ Drives = $bad } }
+        elseif ($failed.Count -gt 0) { New-ScanResult -Status error -Count $failed.Count -Summary ('検査に失敗したドライブがあります: ' + ($failed -join ', ') + $note) -Items $items }
         elseif ($vols.Count -gt 0 -and $unscanned.Count -eq $vols.Count) { New-ScanResult -Status skipped -Summary ('検査できるドライブがありませんでした' + $note) -Items $items }
         else { New-ScanResult -Status ok -Summary ('エラーは見つかりませんでした' + $note) -Items $items }
     }

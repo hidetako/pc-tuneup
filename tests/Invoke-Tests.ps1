@@ -107,6 +107,7 @@ Assert ($sel.Summary -eq 'b') 'Select-ResultObject は最後の結果を返す'
 $lockedDrives = @(Get-BitLockerLockedDrives)
 Assert ($lockedDrives -is [array]) 'Get-BitLockerLockedDrives は配列を返す'
 Assert (@($lockedDrives | Where-Object { $_ -notmatch '^[A-Z]$' }).Count -eq 0) 'Get-BitLockerLockedDrives はドライブ文字だけを返す'
+Assert (@($lockedDrives | Where-Object { $_ -is [array] }).Count -eq 0) 'Get-BitLockerLockedDrives は入れ子の配列を返さない (-in で判定できる)'
 
 # ---- 4. ファイル削除ロジック -------------------------------------------
 Write-Host '[不要ファイルの列挙と削除]'
