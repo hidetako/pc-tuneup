@@ -127,6 +127,7 @@ function Register-Check {
         Manual        = [bool]$d['Manual']
         LongFix       = [bool]$d['LongFix']
         Notes         = [string]$d['Notes']
+        Config        = $d['Config']      # 項目ごとの設定 (New-JunkCheck が使う)
     }
     $Global:PCTuneUp.Checks[$check.Id] = $check
 }
@@ -217,7 +218,7 @@ function Invoke-CheckScan {
         $r = New-ScanResult -Status skipped -Summary '管理者権限が必要です'
     } else {
         try {
-            $out = @(& $check.Scan)
+            $out = @(& $check.Scan $check)
             $r = Select-ResultObject -Output $out -Property 'Status'
             if (-not $r) { $r = New-ScanResult -Status error -Summary '検査結果を取得できませんでした' }
         } catch {
@@ -239,7 +240,7 @@ function Invoke-CheckFix {
     Write-Log "修復: $($check.Name)"
     try {
         if (-not $ScanResult) { $ScanResult = Invoke-CheckScan -Id $Id }
-        $out = @(& $check.Fix $ScanResult)
+        $out = @(& $check.Fix $ScanResult $check)
         $r = Select-ResultObject -Output $out -Property 'Success'
         if (-not $r) { $r = New-FixResult -Success $true -Message '完了' }
     } catch {
@@ -257,7 +258,7 @@ function Invoke-CheckAction {
     if (-not $check.Action) { return (New-FixResult -Success $false -Message 'この項目に操作はありません') }
     Write-Log "操作: $($check.Name) ($($check.ActionLabel))"
     try {
-        $out = @(& $check.Action)
+        $out = @(& $check.Action $check)
         $r = Select-ResultObject -Output $out -Property 'Success'
         if (-not $r) { $r = New-FixResult -Success $true -Message ($check.ActionLabel + ' を実行しました') }
     } catch {
@@ -543,30 +544,43 @@ function New-JunkCheck {
         [scriptblock]$AfterFix,
         [string]$Notes = ''
     )
+    # 設定はチェック側に持たせ、スクリプトブロックは実行時に受け取る。
+    # GetNewClosure() を使うと、Windows PowerShell 5.1 では Core.ps1 の関数
+    # (Get-JunkFiles など) がクロージャの有効範囲から見えず、実行時に
+    # 「用語が認識されません」で失敗する。
+    $config = @{
+        Paths = $Paths; OlderThanDays = $OlderThanDays; Include = $Include; Exclude = $Exclude
+        NoRecurse = [bool]$NoRecurse; BeforeFix = $BeforeFix; AfterFix = $AfterFix
+    }
+
     $scan = {
-        $p = @(& $Paths)
-        $files = Get-JunkFiles -Paths $p -OlderThanDays $OlderThanDays -Include $Include -Exclude $Exclude -NoRecurse:$NoRecurse
+        param($Check)
+        $c = $Check.Config
+        $files = Get-JunkFiles -Paths @(& $c.Paths) -OlderThanDays $c.OlderThanDays `
+            -Include $c.Include -Exclude $c.Exclude -NoRecurse:$c.NoRecurse
         New-JunkScanResult -Files $files
-    }.GetNewClosure()
+    }
 
     $fix = {
-        param($ScanResult)
-        $p = @(& $Paths)
-        if ($BeforeFix) { & $BeforeFix | Out-Null }
+        param($ScanResult, $Check)
+        $c = $Check.Config
+        $p = @(& $c.Paths)
+        if ($c.BeforeFix) { & $c.BeforeFix | Out-Null }
         try {
-            $files = Get-JunkFiles -Paths $p -OlderThanDays $OlderThanDays -Include $Include -Exclude $Exclude -NoRecurse:$NoRecurse
-            $r = Remove-JunkFiles -Files $files -Roots $(if ($NoRecurse) { @() } else { $p })
+            $files = Get-JunkFiles -Paths $p -OlderThanDays $c.OlderThanDays `
+                -Include $c.Include -Exclude $c.Exclude -NoRecurse:$c.NoRecurse
+            $r = Remove-JunkFiles -Files $files -Roots $(if ($c.NoRecurse) { @() } else { $p })
         } finally {
-            if ($AfterFix) { & $AfterFix | Out-Null }
+            if ($c.AfterFix) { & $c.AfterFix | Out-Null }
         }
         $msg = '{0:N0} ファイルを削除し {1} を解放しました' -f $r.Deleted, (Format-Bytes $r.FreedBytes)
         if ($r.Failed -gt 0) { $msg += (' ({0:N0} 件は使用中のためスキップ)' -f $r.Failed) }
         New-FixResult -Success $true -Message $msg -FreedBytes $r.FreedBytes
-    }.GetNewClosure()
+    }
 
     Register-Check @{
         Id = $Id; Group = $Group; Name = $Name; Description = $Description
-        Scan = $scan; Fix = $fix; FixLabel = '削除'
+        Scan = $scan; Fix = $fix; FixLabel = '削除'; Config = $config
         Risk = $Risk; RequiresAdmin = $RequiresAdmin; Notes = $Notes
     }
 }
