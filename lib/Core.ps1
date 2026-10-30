@@ -428,7 +428,8 @@ function Invoke-Exe {
             $timedOut = $true
             Write-Log ("  {0} が {1} 秒を超えたため打ち切ります" -f (Split-Path $File -Leaf), $TimeoutSeconds) 'WARN'
             try { $p.Kill() } catch { }
-            try { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null } catch { }
+            # & で呼ぶと $LASTEXITCODE が残り、呼び出し元スクリプトの終了コードまで変えてしまう
+            try { Start-Process -FilePath 'taskkill.exe' -ArgumentList '/T', '/F', '/PID', $p.Id -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue } catch { }
             try { $p.WaitForExit(10000) | Out-Null } catch { }
             $code = -1
         }

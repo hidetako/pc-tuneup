@@ -411,4 +411,7 @@ foreach ($n in $names) {
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
 Write-Host ("合格 {0} / 不合格 {1}" -f $script:Pass, $script:Fail) -ForegroundColor $(if ($script:Fail) { 'Red' } else { 'Green' })
+# 終了コードは必ず明示する。途中で呼んだネイティブコマンドの $LASTEXITCODE が
+# そのままスクリプトの終了コードとして使われてしまうため。
 if ($script:Fail) { exit 1 }
+exit 0
