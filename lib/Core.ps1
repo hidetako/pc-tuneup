@@ -280,23 +280,25 @@ function Export-Report {
         if (-not $Results.ContainsKey($c.Id)) { continue }
         $r = $Results[$c.Id]
         $f = $FixResults[$c.Id]
-        [ordered]@{
+        # PSCustomObject にすること。[ordered] や hashtable だと Windows PowerShell 5.1 の
+        # Where-Object / Measure-Object でキーを参照できず、集計が静かに 0 になる
+        [pscustomobject]@{
             Id = $c.Id; Category = $c.Category; Group = $c.Group; Name = $c.Name
             Status = $r.Status; Count = $r.Count; Bytes = $r.Bytes; Summary = $r.Summary; Items = $r.Items
-            Fix = $(if ($f) { [ordered]@{ Success = $f.Success; Message = $f.Message; FreedBytes = $f.FreedBytes; RebootRequired = $f.RebootRequired } } else { $null })
+            Fix = $(if ($f) { [pscustomobject]@{ Success = $f.Success; Message = $f.Message; FreedBytes = $f.FreedBytes; RebootRequired = $f.RebootRequired } } else { $null })
         }
     }
-    $report = [ordered]@{
+    $items = @($items)
+    $report = [pscustomobject]@{
         Tool = 'PC TuneUp'; Version = $Global:PCTuneUp.Version; Computer = $env:COMPUTERNAME; User = $env:USERNAME
         Generated = (Get-Date -Format 's'); IsAdmin = (Test-IsAdmin)
-        Summary = [ordered]@{
+        Summary = [pscustomobject]@{
             Issues    = @($items | Where-Object { $_.Status -eq 'issue' }).Count
             Recommend = @($items | Where-Object { $_.Status -eq 'recommend' }).Count
             Errors    = @($items | Where-Object { $_.Status -eq 'error' }).Count
-            # $items は [ordered] ハッシュテーブルなので、Windows PowerShell 5.1 では Measure-Object -Property でキーを参照できない。値を取り出してから合計する
-            JunkBytes = [long](($items | Where-Object { $_.Group -in 'junk', 'browser' } | ForEach-Object { [long]$_.Bytes } | Measure-Object -Sum).Sum)
+            JunkBytes = [long](($items | Where-Object { $_.Group -in 'junk', 'browser' } | Measure-Object -Property Bytes -Sum).Sum)
         }
-        Checks = @($items)
+        Checks = $items
     }
     $json = $report | ConvertTo-Json -Depth 6
     [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding $true))

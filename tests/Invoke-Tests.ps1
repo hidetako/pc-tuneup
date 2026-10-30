@@ -153,10 +153,15 @@ $before = 0; $after = 0
 $Global:PCTuneUp.TestDir = $testDir
 New-JunkCheck -Id 'junk.__test' -Name 'テスト' -Description 'テスト用' -Paths { @($Global:PCTuneUp.TestDir) } -Include '*.tmp' `
     -BeforeFix { $Global:PCTuneUp.TestBefore = 1 } -AfterFix { $Global:PCTuneUp.TestAfter = 1 }
+Assert ((@(Get-ChildItem -LiteralPath $testDir -File)).Count -eq 3) "closure: 下準備で 3 ファイル作れている ($testDir)"
 $sr = Invoke-CheckScan -Id 'junk.__test'
-Assert ($sr.Id -eq 'junk.__test' -and $sr.Count -eq 3 -and $sr.Bytes -eq 3000 -and $sr.Status -eq 'info') 'closure: Scan が正しいパスを見る'
+Assert ($sr.Id -eq 'junk.__test') "closure: Scan の Id ($($sr.Id))"
+Assert ($sr.Count -eq 3) "closure: Scan の件数 ($($sr.Count) / 概要 '$($sr.Summary)')"
+Assert ($sr.Bytes -eq 3000) "closure: Scan のバイト数 ($($sr.Bytes))"
+Assert ($sr.Status -eq 'info') "closure: Scan の状態 ($($sr.Status))"
 $fr = Invoke-CheckFix -Id 'junk.__test' -ScanResult $sr
-Assert ($fr.Success -and $fr.FreedBytes -eq 3000) 'closure: Fix が削除する'
+Assert ($fr.Success) "closure: Fix が成功する ($($fr.Message))"
+Assert ($fr.FreedBytes -eq 3000) "closure: Fix の解放量 ($($fr.FreedBytes))"
 Assert ($Global:PCTuneUp.TestBefore -eq 1 -and $Global:PCTuneUp.TestAfter -eq 1) 'closure: BeforeFix / AfterFix が呼ばれる'
 Assert ((@(Get-ChildItem -LiteralPath $testDir -File)).Count -eq 0) 'closure: ファイルが消えている'
 Register-Check @{ Id = 'system.__err'; Group = 'system'; Name = 'e'; Description = 'e'; Scan = { throw 'boom' } }
@@ -315,9 +320,10 @@ $reportPath = Join-Path $tmp 'report.json'
 $p = Export-Report -Results $results -FixResults @{ 'junk.__test' = $fr } -Path $reportPath
 $json = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
 Assert ($json.Tool -eq 'PC TuneUp' -and $json.Checks.Count -eq 2) 'Export-Report: JSON に 2 件'
-Assert ($json.Summary.Errors -eq 1) 'Export-Report: エラー件数'
-Assert ($json.Summary.JunkBytes -eq 3000) 'Export-Report: 不要ファイルの合計サイズ (PowerShell 5.1 でも集計できる)'
-Assert (($json.Checks | Where-Object { $_.Id -eq 'junk.__test' }).Fix.Success -eq $true) 'Export-Report: 修復結果を含む'
+Assert ($json.Summary.Errors -eq 1) "Export-Report: エラー件数 ($($json.Summary.Errors))"
+Assert ($json.Summary.JunkBytes -eq 3000) "Export-Report: 不要ファイルの合計サイズ ($($json.Summary.JunkBytes))"
+$reportedFix = $json.Checks | Where-Object { $_.Id -eq 'junk.__test' }
+Assert ($reportedFix.Fix.Success -eq $true) "Export-Report: 修復結果を含む (Fix=$($reportedFix.Fix | ConvertTo-Json -Compress))"
 
 # ---- 6b. 色の定義 -----------------------------------------------------
 Write-Host '[色の定義]'
