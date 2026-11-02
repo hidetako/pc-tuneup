@@ -6,7 +6,7 @@
 # =====================================================================
 
 $Global:PCTuneUp = @{
-    Version        = '1.0.0'
+    Version        = '1.1.0'
     IsWindows      = ($env:OS -eq 'Windows_NT')
     LibRoot        = $PSScriptRoot
     Checks         = [ordered]@{}
@@ -702,3 +702,11 @@ function Get-InstalledPrograms {
         }
     }
 }
+
+
+# ---------------------------------------------------------------------
+#  更新の確認 (Get-UpdateChannel / Test-UpdateAvailable / Save-Update ほか)
+#  ここで dot-source しておくと、CLI・GUI・ワーカー ランスペースのどこからでも
+#  Core.ps1 を読み込むだけで使える。
+# ---------------------------------------------------------------------
+. (Join-Path $PSScriptRoot 'Update.ps1')

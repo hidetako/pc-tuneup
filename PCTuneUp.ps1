@@ -14,6 +14,9 @@
       -UninstallSchedule            上記を削除
       -CreateShortcut               デスクトップにアイコン付きショートカットを作成
       -RemoveShortcut               上記を削除
+      -CheckUpdate                  新しいバージョンが出ていないか確認する
+      -Update                       確認して、あれば更新する
+      -NoUpdateCheck                GUI 起動時の更新確認をしない
 #>
 [CmdletBinding()]
 param(
@@ -30,6 +33,9 @@ param(
     [switch]$UninstallSchedule,
     [switch]$CreateShortcut,
     [switch]$RemoveShortcut,
+    [switch]$CheckUpdate,
+    [switch]$Update,
+    [switch]$NoUpdateCheck,
     [switch]$Version
 )
 
@@ -37,7 +43,7 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\Core.ps1')
 Import-Checks
 
-$cliMode = $Scan -or $Fix -or $List -or $Report -or $InstallSchedule -or $UninstallSchedule -or $CreateShortcut -or $RemoveShortcut -or $Version
+$cliMode = $Scan -or $Fix -or $List -or $Report -or $InstallSchedule -or $UninstallSchedule -or $CreateShortcut -or $RemoveShortcut -or $Version -or $CheckUpdate -or $Update
 if ($cliMode) {
     $Global:PCTuneUp.Console = $true
 }
@@ -66,6 +72,27 @@ if ($List) {
             Fix = [bool]$_.Fix; Risk = $_.Risk; Admin = $_.RequiresAdmin; Long = $_.Long
         }
     } | Format-Table -AutoSize
+    return
+}
+
+# ---- 更新 ----------------------------------------------------------------
+if ($CheckUpdate -or $Update) {
+    $info = Test-UpdateAvailable
+    if ($info.Error) { Write-Host $info.Error -ForegroundColor Yellow; return }
+    Write-Host ("現在 {0} / 公開されている最新 {1}" -f $info.Current, $info.Latest)
+    if (-not $info.Available) { Write-Host '最新版です。' -ForegroundColor Green; return }
+    Write-Host ("更新があります: {0}" -f $info.Release.Url) -ForegroundColor Cyan
+    if (-not $Update) { Write-Host '適用するには -Update を付けて実行してください。'; return }
+    if ($info.Channel.Kind -ne 'setup') {
+        Write-Host 'インストール不要版です。上のページからダウンロードして、フォルダーを入れ替えてください。' -ForegroundColor Yellow
+        return
+    }
+    if (-not (Test-IsAdmin)) { Write-Host 'インストーラーの実行には管理者権限が必要です。' -ForegroundColor Red; return }
+    $setup = Save-Update -Release $info.Release
+    Write-Host "ダウンロードしました: $setup"
+    # 無人実行 (-Auto) のときだけウィザードを出さずに進める
+    Start-UpdateInstall -SetupPath $setup -Silent:$Auto | Out-Null
+    Write-Host 'インストーラーを起動しました。'
     return
 }
 
@@ -121,6 +148,7 @@ if (-not $cliMode) {
     if ($Global:PCTuneUp.IsWindows -and -not (Test-IsAdmin) -and -not $NoElevate) {
         $exe = Get-HostExe
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $PSCommandPath), '-Hidden')
+        if ($NoUpdateCheck) { $argList += '-NoUpdateCheck' }
         try {
             Start-Process -FilePath $exe -ArgumentList $argList -Verb RunAs -WorkingDirectory $PSScriptRoot | Out-Null
             return
@@ -130,7 +158,7 @@ if (-not $cliMode) {
     }
     try {
         . (Join-Path $PSScriptRoot 'gui\Gui.ps1')
-        Start-Gui
+        Start-Gui -NoUpdateCheck:$NoUpdateCheck
     } catch {
         $detail = @(
             '起動に失敗しました:'

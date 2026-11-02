@@ -40,6 +40,24 @@ foreach ($id in $Ids) {
 $ResultQueue.Enqueue([pscustomobject]@{ Kind = 'done' })
 '@
 
+# 更新の確認とダウンロードもワーカー ランスペースで行う。
+# ネットワークが遅い・応答しないときに UI スレッドを止めないため。
+$Global:PCTuneUpGui.UpdateScript = @'
+param($LibRoot, $Mode, $Repo)
+. (Join-Path $LibRoot 'Core.ps1')
+try {
+    if ($Mode -eq 'download') {
+        $rel = Get-LatestRelease -Repo $Repo
+        [pscustomobject]@{ Mode = 'download'; Path = (Save-Update -Release $rel); Version = $rel.Version; Error = $null }
+    } else {
+        $info = Test-UpdateAvailable
+        [pscustomobject]@{ Mode = 'check'; Info = $info; Error = $info.Error }
+    }
+} catch {
+    [pscustomobject]@{ Mode = $Mode; Error = $_.Exception.Message }
+}
+'@
+
 function Get-GuiStyle {
     # XAML で定義したスタイルを名前で返す (起動時にキャッシュ済み。無ければウィンドウから検索)
     param([Parameter(Mandatory)][string]$Name)
@@ -681,9 +699,141 @@ function Save-Report {
 }
 
 # ---------------------------------------------------------------------
+#  更新の確認と適用
+# ---------------------------------------------------------------------
+function Start-UpdateJob {
+    # 更新の確認 (check) かインストーラーのダウンロード (download) を別ランスペースで始める
+    param([ValidateSet('check', 'download')][string]$Mode = 'check', [string]$Repo)
+    $G = $Global:PCTuneUpGui
+    if ($G.UpdatePS) { return }     # 二重起動させない
+    try {
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.ApartmentState = 'STA'
+        $rs.ThreadOptions = 'ReuseThread'
+        $rs.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $rs
+        $ps.AddScript($G.UpdateScript).AddArgument($Global:PCTuneUp.LibRoot).AddArgument($Mode).AddArgument($Repo) | Out-Null
+        $G.UpdateRS = $rs
+        $G.UpdatePS = $ps
+        $G.UpdateMode = $Mode
+        $G.UpdateHandle = $ps.BeginInvoke()
+        if (-not $G.UpdateTimer) {
+            $G.UpdateTimer = New-Object System.Windows.Threading.DispatcherTimer
+            $G.UpdateTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+            $G.UpdateTimer.Add_Tick({ Invoke-UpdateTick })
+        }
+        $G.UpdateTimer.Start()
+    } catch {
+        Write-Log "更新処理を開始できません: $($_.Exception.Message)" 'WARN'
+        Close-UpdateJob
+    }
+}
+
+function Close-UpdateJob {
+    $G = $Global:PCTuneUpGui
+    if ($G.UpdateTimer) { try { $G.UpdateTimer.Stop() } catch { } }
+    if ($G.UpdatePS) { try { $G.UpdatePS.Dispose() } catch { } }
+    if ($G.UpdateRS) { try { $G.UpdateRS.Close(); $G.UpdateRS.Dispose() } catch { } }
+    $G.UpdatePS = $null; $G.UpdateRS = $null; $G.UpdateHandle = $null
+}
+
+function Invoke-UpdateTick {
+    $G = $Global:PCTuneUpGui
+    if (-not $G.UpdateHandle -or -not $G.UpdateHandle.IsCompleted) { return }
+    $mode = $G.UpdateMode
+    $res = $null
+    try { $res = @($G.UpdatePS.EndInvoke($G.UpdateHandle)) | Select-Object -Last 1 }
+    catch { Write-Log "更新処理でエラー: $($_.Exception.Message)" 'WARN' }
+    Close-UpdateJob
+    if ($mode -eq 'download') { Complete-UpdateDownload $res; return }
+
+    if (-not $res -or -not $res.Info) { return }
+    $G.Update = $res.Info
+    if ($res.Info.Error) {
+        Add-LogLine ("{0} [WARN] 更新を確認できません: {1}" -f (Get-Date -Format 'HH:mm:ss'), $res.Info.Error)
+        return
+    }
+    if ($res.Info.Available) {
+        Add-LogLine ("{0} [INFO] 更新があります: {1} → {2}" -f (Get-Date -Format 'HH:mm:ss'), $res.Info.Current, $res.Info.Latest)
+        Show-UpdateBar $res.Info
+    } else {
+        Add-LogLine ("{0} [INFO] 最新版です ({1})" -f (Get-Date -Format 'HH:mm:ss'), $res.Info.Current)
+    }
+}
+
+function Show-UpdateBar {
+    param($Info)
+    $ui = $Global:PCTuneUpGui.UI
+    $text = '新しいバージョン {0} が公開されています (現在 {1})。' -f $Info.Latest, $Info.Current
+    if ($Info.Channel -and $Info.Channel.Kind -eq 'setup') {
+        $ui.UpdateButton.Content = '更新する'
+    } else {
+        # インストール不要版は、動いているフォルダーを自分で置き換えるのが危ういので手動にする
+        $ui.UpdateButton.Content = 'ダウンロード'
+        $text += ' インストール不要版のため、ダウンロード後にフォルダーを入れ替えてください。'
+    }
+    $ui.UpdateText.Text = $text
+    $ui.UpdateButton.IsEnabled = $true
+    $ui.UpdateBar.Visibility = 'Visible'
+}
+
+function Hide-UpdateBar {
+    $Global:PCTuneUpGui.UI.UpdateBar.Visibility = 'Collapsed'
+}
+
+function Invoke-UpdateApply {
+    $G = $Global:PCTuneUpGui
+    $info = $G.Update
+    if (-not $info -or -not $info.Release) { return }
+    if ($G.Busy) {
+        [System.Windows.MessageBox]::Show('点検または修復が終わってから更新してください。', 'PC TuneUp', 'OK', 'Information') | Out-Null
+        return
+    }
+    if (-not $info.Channel -or $info.Channel.Kind -ne 'setup') {
+        Start-Tool $info.Release.Url
+        return
+    }
+    $msg = @(
+        ('PC TuneUp {0} に更新します。' -f $info.Latest)
+        ''
+        'インストーラーをダウンロードして実行します。'
+        '更新が始まると PC TuneUp は終了します。'
+    ) -join "`n"
+    if ([System.Windows.MessageBox]::Show($msg, '更新', 'OKCancel', 'Question') -ne 'OK') { return }
+    $G.UI.UpdateButton.IsEnabled = $false
+    $G.UI.UpdateText.Text = 'インストーラーをダウンロードしています...'
+    Add-LogLine ("{0} [INFO] 更新 {1} をダウンロードしています" -f (Get-Date -Format 'HH:mm:ss'), $info.Latest)
+    Start-UpdateJob -Mode download -Repo $info.Channel.Repo
+}
+
+function Complete-UpdateDownload {
+    param($Result)
+    $G = $Global:PCTuneUpGui
+    $err = $null
+    if (-not $Result) { $err = '応答がありませんでした' } elseif ($Result.Error) { $err = $Result.Error }
+    if ($err) {
+        $G.UI.UpdateButton.IsEnabled = $true
+        $G.UI.UpdateText.Text = '更新に失敗しました: ' + $err
+        Add-LogLine ("{0} [ERROR] 更新に失敗: {1}" -f (Get-Date -Format 'HH:mm:ss'), $err)
+        return
+    }
+    try {
+        Start-UpdateInstall -SetupPath $Result.Path | Out-Null
+        $G.UI.UpdateText.Text = 'インストーラーを起動しました。PC TuneUp を終了します。'
+        $G.Window.Close()
+    } catch {
+        $G.UI.UpdateButton.IsEnabled = $true
+        $G.UI.UpdateText.Text = 'インストーラーを起動できませんでした: ' + $_.Exception.Message
+        Add-LogLine ("{0} [ERROR] インストーラーを起動できません: {1}" -f (Get-Date -Format 'HH:mm:ss'), $_.Exception.Message)
+    }
+}
+
+# ---------------------------------------------------------------------
 #  起動
 # ---------------------------------------------------------------------
 function Start-Gui {
+    param([switch]$NoUpdateCheck)
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
     $G = $Global:PCTuneUpGui
     $G.Results = @{}; $G.FixResults = @{}; $G.Selected = @{}; $G.Expanded = @{}; $G.Rows = @{}; $G.GroupHeaders = @{}
@@ -715,6 +865,7 @@ function Start-Gui {
     $ui.CatTuneupGlyph.Text = $Global:PCTuneUp.Categories.tuneup.Glyph
     $ui.CatInternetGlyph.Text = $Global:PCTuneUp.Categories.internet.Glyph
     $ui.CatSecurityGlyph.Text = $Global:PCTuneUp.Categories.security.Glyph
+    $ui.UpdateGlyph.Text = [string][char]0xE895      # Sync
     $ui.HeaderSub.Text = '点検して、見つかった問題を修復します。 v' + $Global:PCTuneUp.Version
     $ui.AdminBadge.Text = $(if (Test-IsAdmin) { '管理者として実行中' } else { '管理者権限なし: 一部の項目はスキップされます' })
     $ui.StatusText.Text = '「点検」を押してください。見つかった問題は「修復」で直します (レジストリは削除前にバックアップされます)。'
@@ -726,6 +877,12 @@ function Start-Gui {
     $ui.FixButton.Add_Click({ Start-Fix })
     $ui.CancelButton.Add_Click({ Stop-Work })
     $ui.ReportButton.Add_Click({ Save-Report })
+    $ui.UpdateButton.Add_Click({ Invoke-UpdateApply })
+    $ui.UpdateCloseButton.Add_Click({ Hide-UpdateBar })
+    $ui.UpdateNotesButton.Add_Click({
+        $info = $Global:PCTuneUpGui.Update
+        if ($info -and $info.Release) { Start-Tool $info.Release.Url }
+    })
 
     $G.Timer = New-Object System.Windows.Threading.DispatcherTimer
     $G.Timer.Interval = [TimeSpan]::FromMilliseconds(200)
@@ -738,9 +895,13 @@ function Start-Gui {
         # UI スレッドごと固まってウィンドウを閉じられなくなる。停止要求だけ出して待たない。
         if ($G.Timer) { try { $G.Timer.Stop() } catch { } }
         if ($G.PS) { try { $G.PS.BeginStop($null, $null) | Out-Null } catch { } }
+        if ($G.UpdateTimer) { try { $G.UpdateTimer.Stop() } catch { } }
+        if ($G.UpdatePS) { try { $G.UpdatePS.BeginStop($null, $null) | Out-Null } catch { } }
     })
 
     Render-Category
     Add-LogLine ("{0} [INFO] PC TuneUp {1} 起動。ログ: {2}" -f (Get-Date -Format 'HH:mm:ss'), $Global:PCTuneUp.Version, $Global:PCTuneUp.LogFile)
+    # 更新の確認。配布版でなければ Get-UpdateChannel が $null を返すので何も起きない。
+    if (-not $NoUpdateCheck -and (Get-UpdateChannel)) { Start-UpdateJob -Mode check }
     $window.ShowDialog() | Out-Null
 }

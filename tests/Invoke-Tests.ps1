@@ -408,6 +408,63 @@ foreach ($n in $names) {
     Assert $used "XAML の $n が Gui.ps1 で使われている"
 }
 
+
+# ---- 更新の確認 -------------------------------------------------------
+# ネットワークには一切出ない。純粋な判定ロジックだけを見る。
+Write-Host '[更新の確認]'
+foreach ($fn in 'Get-UpdateChannel', 'Compare-AppVersion', 'Test-UpdateAvailable', 'Save-Update', 'Start-UpdateInstall', 'ConvertFrom-ChecksumFile', 'Test-FileChecksum') {
+    Assert ([bool](Get-Command $fn -ErrorAction SilentlyContinue)) "Core.ps1 の読み込みで $fn が使える"
+}
+Assert ((Compare-AppVersion -A '1.0.0' -B '1.1.0') -eq -1) '1.0.0 は 1.1.0 より古い'
+Assert ((Compare-AppVersion -A '1.1.0' -B '1.0.0') -eq 1)  '1.1.0 は 1.0.0 より新しい'
+Assert ((Compare-AppVersion -A '1.1.0' -B '1.1.0') -eq 0)  '同じバージョンは 0'
+Assert ((Compare-AppVersion -A '1.2.0' -B 'v1.10.0') -eq -1) 'v 付きと数値の大小を正しく比べる (1.2 < 1.10)'
+Assert ((Compare-AppVersion -A 'abc' -B '1.0.0') -eq 0) '読めないバージョンは 0 (更新を勧めない)'
+
+$chanPath = Join-Path $tmp 'update-channel.json'
+Assert ($null -eq (Get-UpdateChannel -Path $chanPath)) 'update-channel.json が無ければ $null (開発クローンでは確認しない)'
+'{ "Repo": "owner/repo", "Version": "1.1.0", "Kind": "setup" }' | Set-Content -LiteralPath $chanPath -Encoding UTF8
+$chan = Get-UpdateChannel -Path $chanPath
+Assert ($chan.Repo -eq 'owner/repo' -and $chan.Kind -eq 'setup') "update-channel.json を読める (Repo=$($chan.Repo) Kind=$($chan.Kind))"
+'{ "Kind": "setup" }' | Set-Content -LiteralPath $chanPath -Encoding UTF8
+Assert ($null -eq (Get-UpdateChannel -Path $chanPath)) 'Repo が無い update-channel.json は無視する'
+'これは JSON ではない' | Set-Content -LiteralPath $chanPath -Encoding UTF8
+Assert ($null -eq (Get-UpdateChannel -Path $chanPath)) '壊れた update-channel.json でも例外にしない'
+
+Assert ($null -eq (Get-UpdateChannel)) 'このリポジトリ自体は配布版ではない'
+$noChan = Test-UpdateAvailable
+Assert (-not $noChan.Available -and [bool]$noChan.Error) "配布版でなければ通信せず Error を返す ($($noChan.Error))"
+
+$sums = @(
+    'd2a84f4b8b650937ec8f73cd8be2c74add5a911ba64df27458ed8229da804a26  PCTuneUp-1.1.0-setup.exe'
+    '0000000000000000000000000000000000000000000000000000000000000000 *PCTuneUp-1.1.0-portable.zip'
+    '# コメント行'
+)
+Assert ((ConvertFrom-ChecksumFile -Lines $sums -FileName 'PCTuneUp-1.1.0-setup.exe') -eq 'd2a84f4b8b650937ec8f73cd8be2c74add5a911ba64df27458ed8229da804a26') 'SHA256SUMS の行からハッシュを取り出せる'
+Assert ((ConvertFrom-ChecksumFile -Lines $sums -FileName 'PCTuneUp-1.1.0-portable.zip') -eq '0000000000000000000000000000000000000000000000000000000000000000') 'バイナリ印 (*) 付きの行も読める'
+Assert ($null -eq (ConvertFrom-ChecksumFile -Lines $sums -FileName 'ない.exe')) '載っていないファイル名は $null'
+
+$hashTarget = Join-Path $tmp 'hash-target.bin'
+Set-Content -LiteralPath $hashTarget -Value 'PC TuneUp' -NoNewline -Encoding UTF8
+$realHash = (Get-FileHash -LiteralPath $hashTarget -Algorithm SHA256).Hash
+Assert (Test-FileChecksum -Path $hashTarget -Expected $realHash.ToLowerInvariant()) 'チェックサムが一致すれば $true (大文字小文字は問わない)'
+Assert (-not (Test-FileChecksum -Path $hashTarget -Expected ('0' * 64))) 'チェックサムが違えば $false'
+
+$emptyRelease = [pscustomobject]@{ Tag = 'v9.9.9'; Assets = @() }
+$threw = $false
+try { Save-Update -Release $emptyRelease | Out-Null } catch { $threw = $true }
+Assert $threw '該当ファイルが無いリリースは通信せず例外にする'
+
+$updateNames = @('UpdateBar', 'UpdateText', 'UpdateButton', 'UpdateNotesButton', 'UpdateCloseButton', 'UpdateGlyph')
+foreach ($n in $updateNames) { Assert ($names -contains $n) "XAML に $n がある" }
+Assert ($guiText -match 'Test-UpdateAvailable') 'GUI のワーカーが Test-UpdateAvailable を呼ぶ'
+Assert ($guiText -match 'Start-UpdateJob -Mode check') 'GUI 起動時に更新を確認する'
+Assert ($guiText -match 'Get-UpdateChannel') '配布版かどうかを見てから確認する'
+$mainText = Get-Content -LiteralPath (Join-Path $root 'PCTuneUp.ps1') -Raw -Encoding UTF8
+foreach ($sw in '-CheckUpdate', '-Update', '-NoUpdateCheck') {
+    Assert ($mainText -match [regex]::Escape('$' + $sw.TrimStart('-'))) "PCTuneUp.ps1 に $sw がある"
+}
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
 Write-Host ("合格 {0} / 不合格 {1}" -f $script:Pass, $script:Fail) -ForegroundColor $(if ($script:Fail) { 'Red' } else { 'Green' })
