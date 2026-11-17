@@ -85,27 +85,142 @@ New-JunkCheck -Id 'junk.thumbcache' -Name 'サムネイル／アイコンキャ�
     -Notes '削除のためにエクスプローラーを一度再起動します。開いているフォルダーウィンドウは閉じられます。画像のサムネイルが表示されない不具合があるときだけ実行してください。'
 
 # ---- ごみ箱 ----------------------------------------------------------
+# ごみ箱の実体は各ドライブの $Recycle.Bin\<SID>\ で、アカウントごとに分かれている。
+# 管理者で実行すると全員分が見えるが、Clear-RecycleBin が空にするのは実行中の
+# アカウントの分だけ。全員分を数えて自分の分だけ消すと、修復しても件数が減らず
+# 警告が消えない。そこで「このツールが空にする分」だけを数える:
+#   self   実行中のアカウントのごみ箱                         → 空にする
+#   orphan システム ドライブにある、既に存在しないアカウントの分 → 空にする (誰も取り出せない)
+#   other  ほかのアカウントの分                               → 触らない (件数だけ知らせる)
+# システム ドライブ以外にある見知らぬ SID は、別の PC でつないで使っているドライブの
+# 可能性があるので orphan とは見なさない。
+function Global:Get-RecycleBinState {
+    param(
+        [string[]]$BinPaths,       # 各ドライブの $Recycle.Bin (省略時は全ドライブから探す)
+        [string]$SystemBinPath,    # システム ドライブの $Recycle.Bin
+        [string]$CurrentSid,
+        [string[]]$KnownSids       # この PC にプロファイルがあるアカウントの SID
+    )
+    if (-not $PSBoundParameters.ContainsKey('BinPaths')) {
+        $BinPaths = @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+            Where-Object { $_.Root -match '^[A-Z]:\\$' } |
+            ForEach-Object { Join-Path $_.Root '$Recycle.Bin' } |
+            Where-Object { Test-Path -LiteralPath $_ })
+    }
+    if (-not $PSBoundParameters.ContainsKey('SystemBinPath')) {
+        $SystemBinPath = Join-Path ($env:SystemDrive + '\') '$Recycle.Bin'
+    }
+    if (-not $PSBoundParameters.ContainsKey('CurrentSid')) {
+        $CurrentSid = ''
+        try { $CurrentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { }
+    }
+    if (-not $PSBoundParameters.ContainsKey('KnownSids')) {
+        $KnownSids = @()
+        try {
+            $KnownSids = @(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction Stop |
+                ForEach-Object { $_.PSChildName })
+        } catch { }
+    }
+    # アカウントの一覧を正しく読めたときだけ「存在しないアカウント」を判定する。
+    # 読めなかった場合に全員を存在しない扱いにして消してしまわないため。
+    $canJudgeOrphan = ($CurrentSid -and ($KnownSids -contains $CurrentSid))
+
+    $groups = New-Object System.Collections.Generic.List[object]
+    foreach ($bin in @($BinPaths)) {
+        if (-not $bin -or -not (Test-Path -LiteralPath $bin)) { continue }
+        foreach ($dir in (Get-ChildItem -LiteralPath $bin -Directory -Force -ErrorAction SilentlyContinue)) {
+            # Get-JunkFiles は配列を 1 個の値として返すので、@() で直接包むと入れ子になる
+            $files = Get-JunkFiles -Paths @($dir.FullName) -Exclude @('desktop.ini')
+            $files = @($files)
+            if ($files.Count -eq 0) { continue }
+            $sid = $dir.Name
+            $owner = 'other'
+            if ($CurrentSid -and $sid -eq $CurrentSid) { $owner = 'self' }
+            elseif ($canJudgeOrphan -and ($KnownSids -notcontains $sid) -and ($bin -eq $SystemBinPath)) { $owner = 'orphan' }
+            $bytes = [long]0
+            foreach ($f in $files) { $bytes += [long]$f.Length }
+            $groups.Add([pscustomobject]@{ Sid = $sid; Path = $dir.FullName; Owner = $owner; Files = $files; Bytes = $bytes })
+        }
+    }
+    $fixable = @($groups | Where-Object { $_.Owner -ne 'other' })
+    [pscustomobject]@{
+        Groups       = $groups.ToArray()
+        Fixable      = $fixable
+        FixableFiles = @($fixable | ForEach-Object { $_.Files })
+        Others       = @($groups | Where-Object { $_.Owner -eq 'other' })
+    }
+}
+
+function Global:Get-RecycleBinOwnerName {
+    # SID をアカウント名に直す。直せなければ (別の PC のアカウントなど) SID のまま返す
+    param([string]$Sid)
+    try {
+        return (New-Object Security.Principal.SecurityIdentifier $Sid).Translate([Security.Principal.NTAccount]).Value
+    } catch { return $Sid }
+}
+
+function Global:Clear-RecycleBinState {
+    <#
+      ごみ箱を空にして、実際に減った量を返す。
+      「空にした」と報告するのは、点検し直して本当に無くなっていた場合だけ。
+    #>
+    param([hashtable]$StateArgs = @{}, [switch]$SkipShell)
+    $before = Get-RecycleBinState @StateArgs
+    $beforeBytes = [long](($before.Fixable | Measure-Object -Property Bytes -Sum).Sum)
+
+    # 自分のごみ箱はまずシェル経由で空にする (デスクトップのごみ箱アイコンも更新される)。
+    # 空のドライブがあるだけで失敗を返すことがあるため、ここでは失敗にしない。
+    if (-not $SkipShell) {
+        try { Clear-RecycleBin -Force -ErrorAction Stop }
+        catch { Write-Log ("  Clear-RecycleBin: {0}" -f $_.Exception.Message) 'WARN' }
+    }
+    # シェルが残した分と、存在しないアカウントの分は直接消す
+    $left = Get-RecycleBinState @StateArgs
+    if ($left.FixableFiles.Count -gt 0) {
+        Remove-JunkFiles -Files $left.FixableFiles -Roots @($left.Fixable | ForEach-Object { $_.Path }) | Out-Null
+    }
+
+    $after = Get-RecycleBinState @StateArgs
+    $afterBytes = [long](($after.Fixable | Measure-Object -Property Bytes -Sum).Sum)
+    $freed = [Math]::Max([long]0, $beforeBytes - $afterBytes)
+    if ($after.FixableFiles.Count -gt 0) {
+        return New-FixResult -Success $false -FreedBytes $freed -Message (
+            'ごみ箱に {0:N0} ファイル ({1}) が残りました。使用中のファイルがある可能性があります' -f $after.FixableFiles.Count, (Format-Bytes $afterBytes))
+    }
+    New-FixResult -Success $true -FreedBytes $freed -Message ('ごみ箱を空にしました ({0} 解放)' -f (Format-Bytes $freed))
+}
+
 Register-Check @{
     Id = 'junk.recycle-bin'; Group = 'junk'
     Name = 'ごみ箱 (以前削除したファイル)'
     Description = 'ごみ箱に残っているファイルを完全に削除'
     FixLabel = '空にする'
     Scan = {
-        $files = @()
-        foreach ($drv in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match '^[A-Z]:\\$' })) {
-            $bin = Join-Path $drv.Root '$Recycle.Bin'
-            if (Test-Path -LiteralPath $bin) {
-                $files += Get-JunkFiles -Paths @($bin) -Exclude @('desktop.ini')
-            }
+        $state = Get-RecycleBinState
+        $r = New-JunkScanResult -Files $state.FixableFiles
+        $items = @('ごみ箱の中身は Windows のごみ箱で確認できます')
+        $orphans = @($state.Fixable | Where-Object { $_.Owner -eq 'orphan' })
+        if ($orphans.Count -gt 0) {
+            $n = ($orphans | ForEach-Object { $_.Files.Count } | Measure-Object -Sum).Sum
+            $b = ($orphans | Measure-Object -Property Bytes -Sum).Sum
+            $items += ('既に存在しないアカウントのごみ箱: {0:N0} ファイル / {1} (一緒に空にします)' -f $n, (Format-Bytes $b))
         }
-        $r = New-JunkScanResult -Files $files
-        $r.Items = @('ごみ箱の中身は Windows のごみ箱で確認できます')
+        if ($state.Others.Count -gt 0) {
+            $otherCount = 0; $otherBytes = [long]0
+            foreach ($grp in $state.Others) {
+                $otherCount += $grp.Files.Count; $otherBytes += $grp.Bytes
+                $items += ('{0} のごみ箱: {1:N0} ファイル / {2} (このツールでは消しません。そのアカウントで空にしてください)' -f `
+                    (Get-RecycleBinOwnerName $grp.Sid), $grp.Files.Count, (Format-Bytes $grp.Bytes))
+            }
+            # 自分では消せない分を「問題」に数えると、修復しても警告が消えなくなる
+            $r.Summary += (' (ほかのアカウントの分 {0:N0} ファイル / {1} は対象外)' -f $otherCount, (Format-Bytes $otherBytes))
+        }
+        $r.Items = $items
         $r
     }
     Fix = {
         param($ScanResult)
-        Clear-RecycleBin -Force -ErrorAction Stop
-        New-FixResult -Success $true -Message ('ごみ箱を空にしました ({0} 解放)' -f (Format-Bytes $ScanResult.Bytes)) -FreedBytes $ScanResult.Bytes
+        Clear-RecycleBinState
     }
 }
 

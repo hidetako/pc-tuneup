@@ -409,6 +409,59 @@ foreach ($n in $names) {
 }
 
 
+# ---- ごみ箱 -----------------------------------------------------------
+# 点検が数える範囲と、修復が空にする範囲が一致していること。
+# ずれていると「修復しても警告が消えない」状態になる。
+Write-Host '[ごみ箱]'
+$binC = Join-Path (Join-Path $tmp 'driveC') '$Recycle.Bin'
+$binD = Join-Path (Join-Path $tmp 'driveD') '$Recycle.Bin'
+$sidSelf = 'S-1-5-21-1-1001'; $sidOther = 'S-1-5-21-1-1002'; $sidGone = 'S-1-5-21-1-1099'; $sidForeign = 'S-1-5-21-7-1001'
+function New-BinFile { param($Bin, $Sid, $Name, $Size)
+    $d = Join-Path $Bin $Sid
+    $full = Join-Path $d $Name
+    New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
+    [System.IO.File]::WriteAllText($full, ('x' * $Size))
+}
+New-BinFile $binC $sidSelf    '$RAAAAAA.txt' 3000
+New-BinFile $binC $sidSelf    '$IAAAAAA.txt' 100
+New-BinFile $binC $sidSelf    (Join-Path '$RBBBBBB' 'inner.dat') 5000
+New-BinFile $binC $sidSelf    'desktop.ini' 50
+New-BinFile $binC $sidOther   '$RCCCCCC.txt' 7000
+New-BinFile $binC $sidGone    '$RDDDDDD.txt' 11000
+New-BinFile $binD $sidSelf    '$REEEEEE.txt' 13000
+New-BinFile $binD $sidForeign '$RFFFFFF.txt' 17000
+$binArgs = @{ BinPaths = @($binC, $binD); SystemBinPath = $binC; CurrentSid = $sidSelf; KnownSids = @($sidSelf, $sidOther, 'S-1-5-18') }
+
+$st = Get-RecycleBinState @binArgs
+$owners = @{}; foreach ($grp in $st.Groups) { $owners[(Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $grp.Path))) + '/' + $grp.Sid] = $grp.Owner }
+Assert ($owners["driveC/$sidSelf"] -eq 'self' -and $owners["driveD/$sidSelf"] -eq 'self') '自分の SID は全ドライブで self'
+Assert ($owners["driveC/$sidOther"] -eq 'other') 'プロファイルがある別アカウントは other (消さない)'
+Assert ($owners["driveC/$sidGone"] -eq 'orphan') 'システム ドライブの存在しないアカウントは orphan (消す)'
+Assert ($owners["driveD/$sidForeign"] -eq 'other') '別ドライブの見知らぬ SID は other (別の PC のものかもしれないので消さない)'
+$fixBytes = ($st.Fixable | Measure-Object -Property Bytes -Sum).Sum
+Assert ($st.FixableFiles.Count -eq 5 -and $fixBytes -eq 32100) "空にする対象は self と orphan だけ ($($st.FixableFiles.Count) 件 / $fixBytes バイト)"
+Assert (@($st.FixableFiles | Where-Object { $_.Name -eq 'desktop.ini' }).Count -eq 0) 'desktop.ini は数えない'
+Assert ((Get-RecycleBinOwnerName 'S-1-5-21-0-0-0-9999') -eq 'S-1-5-21-0-0-0-9999') '名前に直せない SID はそのまま返す'
+
+# アカウント一覧を読めなかったときは、誰も orphan 扱いにしない (他人の分を消さないため)
+$noList = @{} + $binArgs; $noList.KnownSids = @()
+$stNoList = Get-RecycleBinState @noList
+Assert (@($stNoList.Groups | Where-Object { $_.Owner -eq 'orphan' }).Count -eq 0) 'アカウント一覧が空なら orphan と判定しない'
+
+$fr = Clear-RecycleBinState -StateArgs $binArgs -SkipShell
+Assert ($fr.Success -and $fr.FreedBytes -eq 32100) "修復は成功し、実際に減った量を報告する ($($fr.FreedBytes) バイト / $($fr.Message))"
+$st2 = Get-RecycleBinState @binArgs
+Assert ($st2.FixableFiles.Count -eq 0) '修復後に点検し直すと対象は 0 件 (警告が消える)'
+Assert (Test-Path -LiteralPath (Join-Path (Join-Path $binC $sidOther) '$RCCCCCC.txt')) '別アカウントのごみ箱は残っている'
+Assert (Test-Path -LiteralPath (Join-Path (Join-Path $binD $sidForeign) '$RFFFFFF.txt')) '別ドライブの見知らぬ SID のごみ箱は残っている'
+Assert (Test-Path -LiteralPath (Join-Path (Join-Path $binC $sidSelf) 'desktop.ini')) 'desktop.ini は残っている'
+Assert (-not (Test-Path -LiteralPath (Join-Path (Join-Path $binC $sidSelf) '$RBBBBBB'))) '削除したフォルダーの抜け殻も消えている'
+Assert (@($st2.Others).Count -eq 2) "対象外の分は件数として引き続き報告される ($(@($st2.Others).Count) 件)"
+$fr2 = Clear-RecycleBinState -StateArgs $binArgs -SkipShell
+Assert ($fr2.Success -and $fr2.FreedBytes -eq 0) '空の状態でもう一度実行しても「0 解放」と正直に報告する'
+$binCheck = Get-Check 'junk.recycle-bin'
+Assert ($binCheck.Fix.ToString() -match 'Clear-RecycleBinState' -and $binCheck.Scan.ToString() -match 'Get-RecycleBinState') 'ごみ箱の点検と修復が同じ判定を使っている'
+
 # ---- 更新の確認 -------------------------------------------------------
 # ネットワークには一切出ない。純粋な判定ロジックだけを見る。
 Write-Host '[更新の確認]'
